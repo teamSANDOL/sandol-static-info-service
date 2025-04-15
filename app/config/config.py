@@ -41,3 +41,4 @@ class Config:
     """FastAPI 설정 값을 관리하는 클래스"""
 
     DEBUG = os.getenv("DEBUG", "False").lower() == "true"
+    SHUTTLE_URL: str = "https://ibook.tukorea.ac.kr/Viewer/bus01"
