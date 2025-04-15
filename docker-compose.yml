@@ -1,0 +1,31 @@
+services:
+  app:
+    container_name: <서비스명>-app
+    build: .
+    restart: always
+    env_file:
+      - .env
+    ports:
+      - "<호스트포트>:<컨테이너포트>"
+    networks:
+      - sandol-network
+    depends_on:
+      - db
+
+  db:
+    container_name: <서비스명>-db
+    image: postgres:15
+    restart: always
+    env_file:
+      - .env
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    networks:
+      - sandol-network
+
+networks:
+  sandol-network:
+    driver: bridge
+
+volumes:
+  db_data:
