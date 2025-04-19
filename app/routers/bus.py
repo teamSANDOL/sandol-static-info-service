@@ -1,10 +1,15 @@
+from typing import Literal, cast
+
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import JSONResponse
 
 
 from app.config import Config, logger
 from app.utils import BookDownloader
-from app.utils.image_response import build_image_response_from_url
+from app.utils.image_response import (
+    build_image_response_from_url,
+    build_multi_image_response,
+)
 
 
 router = APIRouter(prefix="/bus")
@@ -62,4 +67,6 @@ async def get_bus_image_by_index(index: int, request: Request):
     if response_type == "json":
         return JSONResponse(content={"image_url": target_url})
 
-    return await build_image_response_from_url(target_url, response_type)
+    return await build_image_response_from_url(
+        target_url, cast(Literal["base64", "binary"], response_type)
+    )
