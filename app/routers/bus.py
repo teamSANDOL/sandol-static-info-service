@@ -60,16 +60,11 @@ async def get_all_bus_images(request: Request):
         response_type = "zip"
     elif Config.Accept.OCTET_STREAM in accept_header:
         response_type = "octet-stream"
-    elif "text/plain" in accept_header:
-        response_type = "text"
-    elif Config.ImageType.JPEG in accept_header:
-        response_type = "jpeg"
     else:
         raise HTTPException(status_code=406, detail="지원되지 않는 Accept 헤더입니다.")
 
     downloader = BookDownloader(Config.SHUTTLE_URL)
     image_urls = await downloader.fetch_image_list()
-    image_urls = image_urls[::-1]
 
     if not image_urls:
         raise HTTPException(status_code=404, detail="버스 이미지가 없습니다.")
@@ -125,7 +120,6 @@ async def get_bus_image_by_index(index: int, request: Request):
 
     downloader = BookDownloader(Config.SHUTTLE_URL)
     image_urls = await downloader.fetch_image_list()
-    image_urls = image_urls[::-1]
 
     if index < 1 or index > len(image_urls):
         raise HTTPException(status_code=404, detail="해당 index의 이미지가 없습니다.")
