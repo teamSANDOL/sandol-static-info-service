@@ -78,27 +78,50 @@ async def get_children(
 @router.get(
     "/{path:path}",
     response_model=Union[OrganizationGroup, OrganizationUnit, list],
-    summary="조직 경로 기반 조회",
+    summary="조직 경로 기반 조회 (필터 지원)",
     description="""
 조직 경로(`/` 구분자 사용)를 기반으로 특정 조직 정보를 조회합니다.
+**선택적으로 하위 조직의 종류(Group/Unit) 또는 이름 기반 필터링**이 가능합니다.
 
-- `Group`일 경우 하위 포함 구조로 반환
-- `Unit`일 경우 전화번호 및 URL 포함 정보 반환
-- 존재하지 않으면 404 에러 발생
+#### Query 파라미터:
+- `only=unit`: 하위 조직 중 Unit만 반환
+- `only=group`: 하위 조직 중 Group만 반환
+- `name=컴퓨터공학부`: 이름이 일치하는 하위 조직만 반환
 
-예시:
-- `/organization/단과대학/SW대학/컴퓨터공학부`
-- `/organization/대학본부/입학처`
-- `/organization/입학처`
-
-> ⚠️ 이 라우터는 `/search`, `/tree`, `/children` 보다 하단에 선언되어야 경로 충돌을 피할 수 있습니다.
+#### 예시:
+- `/organization/단과대학`
+- `/organization/단과대학/SW대학?only=unit`
+- `/organization/대학본부?name=입학처`
 """,
 )
 async def get_organization(
-    path: str = Path(..., description="조직 경로 (예: 단과대학/SW대학/컴퓨터공학부)"),
+    path: str = Path(..., description="조직 경로 (예: 단과대학/SW대학)"),
+    only: Union[None, str] = Query(
+        default=None, description="unit 또는 group 으로 하위 조직 유형 필터링"
+    ),
+    name: Union[None, str] = Query(
+        default=None, description="특정 하위 조직 이름만 필터링"
+    ),
 ):
     structure = get_tukorea_structure()
     result = structure.get_unit(path)
     if result is None:
         raise HTTPException(status_code=404, detail="조직을 찾을 수 없습니다.")
+
+    # Unit 또는 Group이면 그대로 반환
+    if isinstance(result, OrganizationUnit):
+        return result
+    elif isinstance(result, OrganizationGroup):
+        subunits = result.as_list()
+
+        if only == "unit":
+            subunits = [x for x in subunits if isinstance(x, OrganizationUnit)]
+        elif only == "group":
+            subunits = [x for x in subunits if isinstance(x, OrganizationGroup)]
+
+        if name:
+            subunits = [x for x in subunits if x.name == name]
+
+        return subunits
+
     return result
