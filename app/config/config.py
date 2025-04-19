@@ -41,3 +41,35 @@ class Config:
     """FastAPI 설정 값을 관리하는 클래스"""
 
     DEBUG = os.getenv("DEBUG", "False").lower() == "true"
+    SHUTTLE_URL: str = "https://ibook.tukorea.ac.kr/Viewer/bus01"
+
+    class HttpStatus:
+        """HTTP 상태 코드를 정의하는 클래스"""
+
+        OK = 200
+        CREATED = 201
+        NO_CONTENT = 204
+        BAD_REQUEST = 400
+        UNAUTHORIZED = 401
+        FORBIDDEN = 403
+        NOT_FOUND = 404
+        NOT_ACCEPTABLE = 406
+        CONFLICT = 409
+        UNSUPPORTED_MEDIA_TYPE = 415
+        INTERNAL_SERVER_ERROR = 500
+        NOT_IMPLEMENTED = 501
+        BAD_GATEWAY = 502
+
+    class Accept:
+        """Accept 헤더를 정의하는 클래스"""
+
+        JSON = "application/json"
+        BASE64 = "application/base64"
+        ZIP = "application/zip"
+        OCTET_STREAM = "application/octet-stream"
+
+    class ImageType:
+        """이미지 타입을 정의하는 클래스"""
+        JPEG = "image/jpeg"
+        PNG = "image/png"
+        GIF = "image/gif"
