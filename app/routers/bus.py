@@ -39,9 +39,6 @@ router = APIRouter(prefix="/bus")
                 Config.ImageType.JPEG: {
                     "schema": {"type": "string", "format": "binary"}
                 },
-                Config.ImageType.PNG: {
-                    "schema": {"type": "string", "format": "binary"}
-                },
             },
         },
         404: {"description": "버스 이미지가 없습니다."},
@@ -67,8 +64,6 @@ async def get_all_bus_images(request: Request):
         response_type = "text"
     elif Config.ImageType.JPEG in accept_header:
         response_type = "jpeg"
-    elif Config.ImageType.PNG in accept_header:
-        response_type = "png"
     else:
         raise HTTPException(status_code=406, detail="지원되지 않는 Accept 헤더입니다.")
 
@@ -100,9 +95,6 @@ async def get_all_bus_images(request: Request):
                 Config.ImageType.JPEG: {
                     "schema": {"type": "string", "format": "binary"}
                 },
-                Config.ImageType.PNG: {
-                    "schema": {"type": "string", "format": "binary"}
-                },
                 "text/plain": {"example": "https://example.com/img1.jpg"},
             },
         },
@@ -128,8 +120,6 @@ async def get_bus_image_by_index(index: int, request: Request):
         response_type = "text"
     elif Config.ImageType.JPEG in accept_header:
         response_type = "jpeg"
-    elif Config.ImageType.PNG in accept_header:
-        response_type = "png"
     else:
         raise HTTPException(status_code=406, detail="지원되지 않는 Accept 헤더입니다.")
 
