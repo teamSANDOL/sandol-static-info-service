@@ -35,10 +35,6 @@ router = APIRouter(prefix="/bus")
                 Config.Accept.OCTET_STREAM: {
                     "schema": {"type": "string", "format": "binary"}
                 },
-                "text/plain": {"example": "https://example.com/img1.jpg"},
-                Config.ImageType.JPEG: {
-                    "schema": {"type": "string", "format": "binary"}
-                },
             },
         },
         404: {"description": "버스 이미지가 없습니다."},
