@@ -12,7 +12,7 @@ router = APIRouter(prefix="/bus")
 @router.get(
     "/images",
     responses={
-        200: {
+        Config.HttpStatus.OK: {
             "description": "모든 버스 이미지 반환 (응답 타입에 따라 json/base64/zip 등 다양하게 반환됩니다)",
             "content": {
                 Config.Accept.JSON: {
@@ -37,8 +37,10 @@ router = APIRouter(prefix="/bus")
                 },
             },
         },
-        404: {"description": "버스 이미지가 없습니다."},
-        406: {"description": "지원되지 않는 Accept 헤더입니다."},
+        Config.HttpStatus.NOT_FOUND: {"description": "버스 이미지가 없습니다."},
+        Config.HttpStatus.NOT_ACCEPTABLE: {
+            "description": "지원되지 않는 Accept 헤더입니다."
+        },
     },
     response_class=Response,
 )
@@ -57,13 +59,18 @@ async def get_all_bus_images(request: Request):
     elif Config.Accept.OCTET_STREAM in accept_header:
         response_type = "octet-stream"
     else:
-        raise HTTPException(status_code=406, detail="지원되지 않는 Accept 헤더입니다.")
+        raise HTTPException(
+            status_code=Config.HttpStatus.NOT_ACCEPTABLE,
+            detail="지원되지 않는 Accept 헤더입니다.",
+        )
 
     downloader = BookDownloader(Config.SHUTTLE_URL)
     image_urls = await downloader.fetch_image_list()
 
     if not image_urls:
-        raise HTTPException(status_code=404, detail="버스 이미지가 없습니다.")
+        raise HTTPException(
+            status_code=Config.HttpStatus.NOT_FOUND, detail="버스 이미지가 없습니다."
+        )
 
     return await build_image_response(image_urls, response_type)
 
@@ -71,7 +78,7 @@ async def get_all_bus_images(request: Request):
 @router.get(
     "/image/{index}",
     responses={
-        200: {
+        Config.HttpStatus.OK: {
             "description": "특정 인덱스의 버스 이미지 반환 (Accept 헤더에 따라 포맷이 달라짐)",
             "content": {
                 Config.Accept.JSON: {
@@ -89,13 +96,15 @@ async def get_all_bus_images(request: Request):
                 "text/plain": {"example": "https://example.com/img1.jpg"},
             },
         },
-        404: {"description": "해당 index의 이미지가 없습니다."},
-        406: {"description": "지원되지 않는 Accept 헤더입니다."},
+        Config.HttpStatus.NOT_FOUND: {"description": "해당 index의 이미지가 없습니다."},
+        Config.HttpStatus.NOT_ACCEPTABLE: {
+            "description": "지원되지 않는 Accept 헤더입니다."
+        },
     },
     response_class=Response,
 )
 async def get_bus_image_by_index(index: int, request: Request):
-    """특정 인덱스의 버스 이미지를 Accept 헤더에 따라 다양한 형식으로 반환합니다."""
+    """특정 인덱스(1부터 시작)의 버스 이미지를 Accept 헤더에 따라 다양한 형식으로 반환합니다."""
     accept_header = request.headers.get("accept", "").lower()
     logger.info(f"버스 이미지 요청 (index={index})")
 
@@ -112,12 +121,18 @@ async def get_bus_image_by_index(index: int, request: Request):
     elif Config.ImageType.JPEG in accept_header:
         response_type = "jpeg"
     else:
-        raise HTTPException(status_code=406, detail="지원되지 않는 Accept 헤더입니다.")
+        raise HTTPException(
+            status_code=Config.HttpStatus.NOT_ACCEPTABLE,
+            detail="지원되지 않는 Accept 헤더입니다.",
+        )
 
     downloader = BookDownloader(Config.SHUTTLE_URL)
     image_urls = await downloader.fetch_image_list()
 
     if index < 1 or index > len(image_urls):
-        raise HTTPException(status_code=404, detail="해당 index의 이미지가 없습니다.")
+        raise HTTPException(
+            status_code=Config.HttpStatus.NOT_FOUND,
+            detail="해당 index의 이미지가 없습니다.",
+        )
 
     return await build_image_response(image_urls[index - 1], response_type)
