@@ -21,7 +21,7 @@ async def lifespan(app: FastAPI):
 
 
 # lifespan 적용
-app = FastAPI(lifespan=lifespan, root_path="/static_info")
+app = FastAPI(lifespan=lifespan, root_path="/static-info")
 app.include_router(bus_router)
 
 
