@@ -7,10 +7,10 @@ from app.utils import BookDownloader
 from app.utils.image_response import build_image_response_from_url
 
 
-bus_api = APIRouter(prefix="/bus")
+router = APIRouter(prefix="/bus")
 
 
-@bus_api.get("/images")
+@router.get("/images")
 async def get_all_bus_images(request: Request):
     """모든 버스 이미지들을 Content-Type에 따라 반환합니다."""
     content_type = request.headers.get("content-type", "").lower()
@@ -35,7 +35,7 @@ async def get_all_bus_images(request: Request):
     return await build_multi_image_response(image_urls, response_type)
 
 
-@bus_api.get("/image/{index}")
+@router.get("/image/{index}")
 async def get_bus_image_by_index(index: int, request: Request):
     """특정 인덱스의 버스 이미지 반환"""
     content_type = request.headers.get("content-type", "").lower()

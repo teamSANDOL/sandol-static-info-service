@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 import uvicorn
 
+from app.routers import bus_router
 from app.config.config import logger
 
 
@@ -21,6 +22,7 @@ async def lifespan(app: FastAPI):
 
 # lifespan 적용
 app = FastAPI(lifespan=lifespan, root_path="/static_info")
+app.include_router(bus_router)
 
 
 @app.get("/")
