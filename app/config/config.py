@@ -1,5 +1,6 @@
 """FastAPI 앱의 설정을 정의하는 모듈입니다."""
 
+import json
 import os
 import logging
 from dotenv import load_dotenv
@@ -42,6 +43,9 @@ class Config:
 
     DEBUG = os.getenv("DEBUG", "False").lower() == "true"
     SHUTTLE_URL: str = "https://ibook.tukorea.ac.kr/Viewer/bus01"
+    school_info_path: str = os.path.join(
+        os.path.abspath(os.path.join(CONFIG_DIR, "school_info.json"))
+    )
 
     class HttpStatus:
         """HTTP 상태 코드를 정의하는 클래스"""
@@ -73,3 +77,8 @@ class Config:
         JPEG = "image/jpeg"
         PNG = "image/png"
         GIF = "image/gif"
+
+    @staticmethod
+    def get_school_info_file():
+        with open(Config.school_info_path, "r", encoding="utf-8") as f:
+            return json.load(f)
