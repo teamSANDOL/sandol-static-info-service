@@ -1,6 +1,6 @@
 """학교 조직 구조를 관리하는 모듈"""
 
-from typing import Dict, Optional, List, Union
+from typing import Dict, Optional, List, Union, Literal
 from collections import deque
 
 from pydantic import BaseModel
@@ -17,6 +17,7 @@ class OrganizationUnit(BaseModel):
         url (Optional[str]): URL, 홈페이지 주소
     """
 
+    type: Literal["unit"] = "unit"
     name: str
     phone: Optional[str] = None
     url: Optional[str] = None
@@ -25,6 +26,7 @@ class OrganizationUnit(BaseModel):
 class OrganizationGroup(BaseModel):
     """하위 조직을 포함할 수 있는 조직 단위 (대학본부, 단과대학 등)"""
 
+    type: Literal["group"] = "group"
     name: str
     subunits: Dict[str, Union["OrganizationUnit", "OrganizationGroup"]] = {}
 
@@ -61,15 +63,13 @@ class UniversityStructure(BaseModel):
             return OrganizationUnit(
                 name=name, phone=data.get("phone"), url=data.get("url")
             )
-        else:
-            subunits = {key: cls._parse_data(key, value) for key, value in data.items()}
-            return OrganizationGroup(name=name, subunits=subunits)
+
+        subunits = {key: cls._parse_data(key, value) for key, value in data.items()}
+        return OrganizationGroup(name=name, subunits=subunits)
 
     def get_unit(
         self, query: str
-    ) -> Union[
-        OrganizationUnit, List[Union[OrganizationUnit, OrganizationGroup]], None
-    ]:
+    ) -> OrganizationUnit | OrganizationGroup | None:
         """조직 구조에서 해당하는 부분을 찾아 반환
 
         Args:
@@ -87,10 +87,10 @@ class UniversityStructure(BaseModel):
         return self._bfs_search(self.root, parts)
 
     def _bfs_search(
-        self, current_node: Union[OrganizationGroup, OrganizationUnit], parts: List[str]
-    ) -> Union[
-        OrganizationUnit, List[Union[OrganizationUnit, OrganizationGroup]], None
-    ]:
+        self,
+        current_node: OrganizationGroup | OrganizationUnit,
+        parts: list[str],
+    ) -> OrganizationGroup | OrganizationUnit | None:
         """BFS 방식으로 각 part를 순차적으로 탐색
 
         BFS 방식으로 각 part를 순차적으로 탐색하여 조직 구조를 찾는 함수입니다.
@@ -107,7 +107,6 @@ class UniversityStructure(BaseModel):
                 해당하는 조직을 찾은 경우 해당 조직을 반환
                 찾지 못한 경우 None 반환
         """
-
         queue = deque([(current_node, parts)])  # (현재 노드, 남은 parts)
 
         while queue:
@@ -115,9 +114,7 @@ class UniversityStructure(BaseModel):
 
             # 경로가 모두 탐색된 경우, 현재 노드를 반환
             if not remaining_parts:
-                return (
-                    node if isinstance(node, OrganizationUnit) else node
-                )  # OrganizationGroup 그대로 반환
+                return node
 
             # 현재 노드가 OrganizationGroup인 경우 하위 유닛에서 찾기
             if isinstance(node, OrganizationGroup):
