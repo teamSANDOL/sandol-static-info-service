@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Query, Path, HTTPException
+from fastapi import APIRouter, Path, HTTPException
 from typing import Union, List
 from app.utils.university_structure import (
     get_tukorea_structure,
@@ -18,7 +18,7 @@ router = APIRouter(
     response_model=OrganizationGroup,
     summary="학교 전체 조직 트리 조회",
     description="""
-학교 전체 조직 구조를 트리 형태로 반환합니다.  
+학교 전체 조직 구조를 트리 형태로 반환합니다.
 최상위 루트(예: 대학본부)를 기준으로 하위 조직들을 포함한 전체 트리를 제공합니다.
 
 - UI 초기 렌더링 또는 전체 구조 시각화 시 유용
@@ -44,7 +44,7 @@ async def get_tree():
 """,
 )
 async def search_by_name(
-    name: str = Path(..., description="조직 이름 (예: 입학처, 컴퓨터공학부)")
+    name: str = Path(..., description="조직 이름 (예: 입학처, 컴퓨터공학부)"),
 ):
     structure = get_tukorea_structure()
     return structure._search_by_name(structure.root, name)
@@ -66,7 +66,7 @@ async def search_by_name(
 """,
 )
 async def get_children(
-    path: str = Path(..., description="조직 경로 (예: 단과대학/SW대학)")
+    path: str = Path(..., description="조직 경로 (예: 단과대학/SW대학)"),
 ):
     structure = get_tukorea_structure()
     result = structure.get_unit(path)
@@ -95,7 +95,7 @@ async def get_children(
 """,
 )
 async def get_organization(
-    path: str = Path(..., description="조직 경로 (예: 단과대학/SW대학/컴퓨터공학부)")
+    path: str = Path(..., description="조직 경로 (예: 단과대학/SW대학/컴퓨터공학부)"),
 ):
     structure = get_tukorea_structure()
     result = structure.get_unit(path)
