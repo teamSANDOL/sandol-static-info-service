@@ -47,6 +47,7 @@ class OrganizationGroup(BaseModel):
 class UniversityStructure(BaseModel):
     """학교 전체 조직 구조를 관리하는 클래스"""
 
+    type: Literal["root"] = "root"
     root: Union[OrganizationGroup, OrganizationUnit]
 
     @classmethod
