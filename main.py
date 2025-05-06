@@ -32,6 +32,11 @@ async def root():
     return {"test": "Hello Sandol"}
 
 
+@app.get("/health")
+async def health_check():
+    """헬스 체크 엔드포인트입니다."""
+    return {"status": "ok"}
+
 if __name__ == "__main__":
     HOST = "0.0.0.0"
     PORT = 5600
