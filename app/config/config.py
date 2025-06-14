@@ -17,24 +17,16 @@ SERVICE_DIR = os.path.abspath(os.path.join(CONFIG_DIR, "../.."))
 logger = logging.getLogger("sandol_static_info_service")
 logger.setLevel(logging.DEBUG)  # 모든 로그 기록
 
-# 핸들러 1: 파일에 모든 로그 저장 (디버깅용)
-file_handler = logging.FileHandler(
-    os.path.join(SERVICE_DIR, "app.log"), encoding="utf-8"
-)
-file_handler.setLevel(logging.DEBUG)  # DEBUG 이상 저장
-file_formatter = logging.Formatter(
-    "%(asctime)s - %(levelname)s - %(filename)s:%(lineno)d - %(message)s"
-)
-file_handler.setFormatter(file_formatter)
-
-# 핸들러 2: 콘솔에 INFO 이상만 출력 (간결한 버전)
 console_handler = logging.StreamHandler()
-console_handler.setLevel(logging.INFO)  # INFO 이상만 출력
+if os.getenv("DEBUG", "False").lower() == "true":
+    console_handler.setLevel(logging.DEBUG)  # DEBUG 이상 출력
+else:
+    # DEBUG 모드가 아닐 때는 INFO 이상만 출력
+    console_handler.setLevel(logging.INFO)  # INFO 이상만 출력
 console_formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
 console_handler.setFormatter(console_formatter)
 
-# 로거에 핸들러 추가
-logger.addHandler(file_handler)
+
 logger.addHandler(console_handler)
 
 
@@ -74,6 +66,7 @@ class Config:
 
     class ImageType:
         """이미지 타입을 정의하는 클래스"""
+
         JPEG = "image/jpeg"
         PNG = "image/png"
         GIF = "image/gif"
