@@ -1,69 +1,75 @@
-# 📌 산돌이 Repository Template  
+# sandol-static-info-service
 
-## 📂 개요  
-**(이 Repository가 담당하는 서비스의 간략한 설명을 작성하세요.)**  
-이 Repository는 **산돌이 프로젝트**를 위한 표준 템플릿입니다.
-모든 서비스는 **Docker 컨테이너로 실행**되며, 이후 **Docker Compose를 활용하여 통합 운영**됩니다.  
-프론트엔드 서비스(챗봇 서버, 웹 서비스 등)의 경우, 필요에 따라 **독립적인 `docker-compose` 환경에서 운영**될 수 있습니다.  
-일관된 개발 및 배포 환경을 유지하기 위해 이 템플릿을 사용을 권장하며, 템플릿의 구조 및 내용은 자유롭게 수정해 사용할 수 있습니다. 
+한국공학대학교 관련 정적 정보를 제공하는 FastAPI 기반 API 서비스입니다.
 
----
+## 개요
 
-## 📌 프로젝트 구조  
-- **(이 Repository에서 사용하는 개발 프레임워크 및 주요 기술 스택을 작성하세요.)**  
-  - 예시: `FastAPI`, `Node.js`, `Express`, `Discord.js`, `React` 등  
-- **(이 Repository가 담당하는 서비스의 역할을 간략히 설명하세요.)**  
-  - 예시: `카카오톡 챗봇`, `디스코드 챗봇`, `웹 프론트엔드`, `공지사항 크롤러 API` 등  
-- **(해당 서비스가 연동되는 외부 API 및 설정해야 할 항목이 있다면 명시하세요.)**  
-  - 예시: `카카오톡 Open Builder`, `디스코드 API`, `AWS S3`, `GCP Cloud Storage` 등  
+- 프레임워크: `FastAPI`
+- Python 버전: `3.11` (`>=3.11,<3.12`)
+- 주요 의존성: `uvicorn`, `httpx`, `python-dotenv`
+- API 기본 경로(root path): `/static-info`
 
----
+## 프로젝트 구조
 
-## 📌 문서  
-- **(API 문서 링크를 삽입하세요.)**  
-  - 예시: `[API 문서 (Swagger)](링크)`, `[API 문서 (Notion)](링크)`  
-- **(이 Repository에서 제공하는 서비스 관련 문서를 추가하세요.)**  
-  - 예시: `챗봇 명령어 목록`, `웹 서비스 이용 가이드`, `Webhook 사용법` 등  
-
----
-
-## 📌 환경 설정  
-- **모든 서비스는 Docker 기반으로 실행되므로, 로컬 환경에 별도로 의존하지 않음**  
-- **환경 변수 파일 (`.env`) 필요 시, 샘플 파일 (`.env.example`) 제공**  
-- **Docker Compose를 통해 서비스 간 네트워크 및 볼륨을 설정**  
-- **프론트엔드 서비스(챗봇 서버, 웹 서비스)와 백엔드 서비스(API 서버)의 차이점을 반영하여 개별 실행 가능**  
-
-### 📌 실행 방법  
-#### 1. 기본 실행 (모든 서비스 실행)  
-```bash
-docker compose up -d
+```text
+.
+├─ app/
+│  ├─ config/          # 설정/로깅
+│  ├─ routers/         # API 라우터
+│  └─ utils/           # 외부 데이터 수집/가공 유틸
+├─ main.py             # FastAPI 앱 엔트리포인트
+├─ Dockerfile
+└─ docker-compose.yml
 ```
-#### 2. 특정 서비스만 실행 (예: 챗봇 서버)  
+
+## 환경 변수
+
+`.env.example`을 복사해 `.env`를 만든 뒤 값을 설정하세요.
+
 ```bash
-docker compose up -d <서비스명>
+cp .env.example .env
 ```
-#### 3. 서비스 중지  
+
+- `DEBUG`: 로깅 레벨 제어 (`true`/`false`)
+- `SECRET_KEY`: compose 환경에서 주입되는 키
+
+## Docker 실행(추천)
+
+```bash
+docker compose up --build -d
+```
+
+- 기본 노출 주소: `http://localhost:8000`
+- health: `http://localhost:8000/static-info/health`
+- Swagger UI: `http://localhost:8000/static-info/docs`
+- ReDoc: `http://localhost:8000/static-info/redoc`
+
+중지:
+
 ```bash
 docker compose down
 ```
-#### 4. 환경 변수 변경 후 재시작  
+
+## 로컬 실행
+
+의존성 설치 후 `uvicorn`으로 실행합니다.
+
 ```bash
-docker compose up -d --build
+pip install -r requirements.txt
+uvicorn main:app --host 0.0.0.0 --port 5600 --reload
 ```
 
----
+- 로컬 기본 주소: `http://localhost:5600`
+- health: `http://localhost:5600/health`
 
-## 📌 배포 가이드  
-- **(CI/CD 적용 여부 및 배포 자동화 여부를 설명하세요.)**  
-  - 예시: `GitHub Actions 사용 여부`, `GCP Cloud Run 자동 배포`, `AWS Lambda 연동 여부` 등  
-- **(배포 시 관리해야 할 환경 변수 및 보안 설정을 명시하세요.)**  
-  - 예시: `.env 파일의 API Key`, `Webhook URL`, `DB 접속 정보` 등
-- **(배포시 주의해야할 사항을 설명하세요.)**
-  - 예시: `별도 domain 연결 필요`, `독립 Database 설정 필요` 등
----
+## 주요 API
 
-## 📌 문의  
-- **(디스코드 채널 링크를 삽입하세요)**    
+`main.py`에서 `root_path=/static-info`를 사용하므로, compose 기준 모든 엔드포인트는 `/static-info` 하위로 접근합니다.
 
----
-🚀 **산돌이 프로젝트와 함께 효율적인 개발 환경을 만들어갑시다!**  
+- `GET /static-info/health`
+- `GET /static-info/bus/images`
+- `GET /static-info/bus/image/{index}`
+- `GET /static-info/organization/tree`
+- `GET /static-info/organization/search/{name}`
+- `GET /static-info/organization/{path}/children`
+- `GET /static-info/organization/{path}`
