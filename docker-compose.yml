@@ -3,6 +3,8 @@ services:
     container_name: <서비스명>-app
     build: .
     restart: always
+    volumes:
+      - ./app/config/school_info.json:/app/app/config/school_info.json:ro
     env_file:
       - .env
     ports:
