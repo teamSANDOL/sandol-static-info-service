@@ -61,6 +61,7 @@ uvicorn main:app --host 0.0.0.0 --port 5600 --reload
 
 - 로컬 기본 주소: `http://localhost:5600`
 - health: `http://localhost:5600/health`
+- OpenAPI 문서: `http://localhost:5600/docs`
 
 ## 주요 API
 
