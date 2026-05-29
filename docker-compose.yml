@@ -1,6 +1,6 @@
 services:
   static-info-service:
-    container_name: sandol_static_info_service
+    container_name: sandol_static_info_service-test
     build:
       context: .
       dockerfile: Dockerfile
