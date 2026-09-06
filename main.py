@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 import uvicorn
 
-from app.routers import bus_router, organization_router
+from app.routers import bus_router, meal_router, organization_router
 from app.config.config import logger
 
 
@@ -23,7 +23,9 @@ async def lifespan(app: FastAPI):
 # lifespan 적용
 app = FastAPI(lifespan=lifespan, root_path="/static-info")
 app.include_router(bus_router)
+app.include_router(meal_router)
 app.include_router(organization_router)
+
 
 @app.get("/")
 async def root():
@@ -36,6 +38,7 @@ async def root():
 async def health_check():
     """헬스 체크 엔드포인트입니다."""
     return {"status": "ok"}
+
 
 if __name__ == "__main__":
     HOST = "0.0.0.0"

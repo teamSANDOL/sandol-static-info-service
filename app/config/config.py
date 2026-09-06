@@ -35,6 +35,7 @@ class Config:
 
     DEBUG = os.getenv("DEBUG", "False").lower() == "true"
     SHUTTLE_URL: str = "https://ibook.tukorea.ac.kr/Viewer/bus01"
+    WEEKLY_MENU_URL: str = "https://ibook.tukorea.ac.kr/Viewer/menu02"
     school_info_path: str = os.path.join(
         os.path.abspath(os.path.join(CONFIG_DIR, "school_info.json"))
     )

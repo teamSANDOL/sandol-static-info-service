@@ -49,11 +49,12 @@ async def build_response_base64(image_urls: list[str]):
     )
 
 
-async def build_response_zip(image_urls: list[str]):
+async def build_response_zip(image_urls: list[str], file_stem: str = "shuttle"):
     """Zip 파일 반환 값 생성하는 함수입니다.
 
     Args:
         image_urls (list[str]): 이미지 URL 리스트
+        file_stem (str): 다운로드 파일명 앞부분 (예: shuttle, meal)
 
     Returns:
         StreamingResponse: 이미지들을 포함한 ZIP 파일 스트리밍 응답
@@ -68,20 +69,23 @@ async def build_response_zip(image_urls: list[str]):
                         status_code=Config.HttpStatus.BAD_GATEWAY,
                         detail=f"이미지 다운로드 실패: {url}",
                     )
-                zip_file.writestr(f"shuttle_{idx}.jpg", resp.content)
+                zip_file.writestr(f"{file_stem}_{idx}.jpg", resp.content)
     zip_buffer.seek(0)
     return StreamingResponse(
         zip_buffer,
         media_type="application/zip",
-        headers={"Content-Disposition": "attachment; filename=shuttle_images.zip"},
+        headers={"Content-Disposition": f"attachment; filename={file_stem}_images.zip"},
     )
 
 
-async def build_response_octet_stream(image_urls: list[str]):
+async def build_response_octet_stream(
+    image_urls: list[str], file_stem: str = "shuttle"
+):
     """Octet-stream 반환 값 생성하는 함수입니다.
 
     Args:
         image_urls (list[str]): 이미지 URL 리스트
+        file_stem (str): 다운로드 파일명 앞부분 (예: shuttle, meal)
 
     Returns:
         StreamingResponse: 단일 이미지 또는 ZIP 파일 스트리밍 응답
@@ -97,10 +101,10 @@ async def build_response_octet_stream(image_urls: list[str]):
             return StreamingResponse(
                 iter([resp.content]),
                 media_type="image/jpeg",
-                headers={"Content-Disposition": "inline; filename=shuttle.jpg"},
+                headers={"Content-Disposition": f"inline; filename={file_stem}.jpg"},
             )
     else:
-        return await build_response_zip(image_urls)
+        return await build_response_zip(image_urls, file_stem)
 
 
 async def build_response_text(image_urls: list[str]):
@@ -115,11 +119,12 @@ async def build_response_text(image_urls: list[str]):
     return PlainTextResponse(content=image_urls[0])
 
 
-async def build_response_jpeg(image_urls: list[str]):
+async def build_response_jpeg(image_urls: list[str], file_stem: str = "shuttle"):
     """JPEG 이미지 반환 값 생성하는 함수입니다.
 
     Args:
         image_urls (list[str]): 이미지 URL 리스트
+        file_stem (str): 다운로드 파일명 앞부분 (예: shuttle, meal)
 
     Returns:
         StreamingResponse: JPEG 이미지 스트리밍 응답
@@ -133,16 +138,19 @@ async def build_response_jpeg(image_urls: list[str]):
         return StreamingResponse(
             iter([resp.content]),
             media_type="image/jpeg",
-            headers={"Content-Disposition": "inline; filename=shuttle.jpg"},
+            headers={"Content-Disposition": f"inline; filename={file_stem}.jpg"},
         )
 
 
-async def build_image_response(image_urls: Union[str, list[str]], response_type: str):
+async def build_image_response(
+    image_urls: Union[str, list[str]], response_type: str, file_stem: str = "shuttle"
+):
     """이미지 응답 생성하는 함수입니다.
 
     Args:
         image_urls (Union[str, list[str]]): 이미지 URL 또는 URL 리스트
         response_type (str): 응답 타입 (json, base64, zip, octet-stream, text, jpeg, png)
+        file_stem (str): 다운로드 파일명 앞부분 (예: shuttle, meal)
 
     Returns:
         Response: 요청된 타입에 따른 FastAPI 응답 객체
@@ -159,11 +167,11 @@ async def build_image_response(image_urls: Union[str, list[str]], response_type:
     if response_type == "base64":
         return await build_response_base64(urls)
     if response_type == "zip":
-        return await build_response_zip(urls)
+        return await build_response_zip(urls, file_stem)
     if response_type == "octet-stream":
-        return await build_response_octet_stream(urls)
+        return await build_response_octet_stream(urls, file_stem)
     if response_type == "text":
         return await build_response_text(urls)
     if response_type == "jpeg":
-        return await build_response_jpeg(urls)
+        return await build_response_jpeg(urls, file_stem)
     raise HTTPException(status_code=400, detail="지원되지 않는 response_type입니다.")

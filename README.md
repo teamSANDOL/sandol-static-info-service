@@ -70,6 +70,8 @@ uvicorn main:app --host 0.0.0.0 --port 5600 --reload
 - `GET /static-info/health`
 - `GET /static-info/bus/images`
 - `GET /static-info/bus/image/{index}`
+- `GET /static-info/meal/images` (주간 식단표 iBook 페이지 이미지)
+- `GET /static-info/meal/image/{index}`
 - `GET /static-info/organization/tree`
 - `GET /static-info/organization/search/{name}`
 - `GET /static-info/organization/{path}/children`

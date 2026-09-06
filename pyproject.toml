@@ -18,10 +18,15 @@ dev = [
     "black>=25.1.0,<26",
     "mypy>=1.15.0,<2",
     "types-pytz>=2025.1.0.20250204,<2026",
+    "pytest>=9.1.1",
 ]
 
 [tool.uv]
 package = false
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
 
 [build-system]
 requires = ["hatchling"]
@@ -81,3 +86,6 @@ indent-style = "space"
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["D", "S101", "PLR2004"]
