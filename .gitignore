@@ -178,3 +178,6 @@ cython_debug/
 !test*.db
 
 .vscode/
+
+# 셔틀 시간표 파싱 결과 (compose bind mount)
+data/

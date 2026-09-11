@@ -8,7 +8,7 @@ services:
       - .env
     environment:
       - PYTHONUNBUFFERED=1
-      - SECRET_KEY=${SECRET_KEY:-changeme}
+      - STATIC_INFO_API_KEY_SHA256=${STATIC_INFO_API_KEY_SHA256:-}
     volumes:
       - ./:/app
     networks:
