@@ -128,6 +128,10 @@ def _canon_direction(text):
     for _, name in hits:
         if not seq or seq[-1] != name:
             seq.append(name)
+    # 정왕역↔제2캠퍼스 직행은 없습니다. 문서에 '정왕역 ↔ 제2캠퍼스'로만 적혀 있어도
+    # 실제로는 본교 운동장 옆(서문) 정류장을 경유하므로 경유지를 채워 넣습니다.
+    if seq == ["정왕역", "제2캠퍼스"] or seq == ["제2캠퍼스", "정왕역"]:
+        seq.insert(1, "본교")
     return " → ".join(seq) if len(seq) >= 2 else None
 
 

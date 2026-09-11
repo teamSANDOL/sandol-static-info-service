@@ -86,8 +86,14 @@ def check_parser_helpers():
     # 긴 이름 우선 매칭이라 '제2캠퍼스'가 '2캠'으로 잘리지 않는다
     assert _canon_direction("본교 ⇒ 2캠퍼스") == "본교 → 제2캠퍼스"
     assert _canon_direction("정왕역⇒본교⇒2캠퍼스") == "정왕역 → 본교 → 제2캠퍼스"
+    # 정왕역↔2캠은 직행이 없어 본교 경유를 채워 넣는다 (상수 표에 직행이 없음)
+    assert _canon_direction("정왕역 ↔ 제2캠퍼스") == "정왕역 → 본교 → 제2캠퍼스"
+    assert _canon_direction("제2캠퍼스 출발") is None  # 장소 하나뿐이면 확정하지 않음
     # 장소가 하나뿐인 조각은 방향으로 확정하지 않는다
     assert _canon_direction("본교↔") is None
+    # 확정된 방향은 전부 상수 표에 있어야 한다
+    for h in ("본교 ⇒ 2캠퍼스", "정왕역⇒본교⇒2캠퍼스", "정왕역 ↔ 제2캠퍼스", "2캠퍼스⇒본교⇒정왕역"):
+        assert _canon_direction(h) in SHUTTLE_DIRECTIONS
     assert _day_type("『정왕역 ↔ 한국공대 본교』시간표 (평일)") == "평일"
     # 제목에 운행일이 없으면 본문에서 찾는다
     assert _day_type("셔틀버스 안내\n토요일 운행") == "토요일"
