@@ -34,8 +34,17 @@ class Config:
     """FastAPI 설정 값을 관리하는 클래스"""
 
     DEBUG = os.getenv("DEBUG", "False").lower() == "true"
+    # API Key 원본은 저장하지 않고 SHA-256 hex 해시만 보관 (X-API-Key 인증용)
     SHUTTLE_URL: str = "https://ibook.tukorea.ac.kr/Viewer/bus01"
     WEEKLY_MENU_URL: str = "https://ibook.tukorea.ac.kr/Viewer/menu02"
+
+    # 셔틀 시간표는 iBook 원본 PDF(/web/RawFileList)를 좌표 기반으로 파싱합니다.
+    # 외부 AI 호출은 쓰지 않습니다.
+
+    # 파싱 결과 저장 위치 (compose에서 bind mount)
+    DATA_DIR: str = os.getenv("DATA_DIR", os.path.join(SERVICE_DIR, "data"))
+    SHUTTLE_TIMETABLE_PATH: str = os.path.join(DATA_DIR, "shuttle_timetable.json")
+    SHUTTLE_PDF_DIR: str = os.path.join(DATA_DIR, "shuttle_pdf")
     school_info_path: str = os.path.join(
         os.path.abspath(os.path.join(CONFIG_DIR, "school_info.json"))
     )
@@ -45,6 +54,7 @@ class Config:
 
         OK = 200
         CREATED = 201
+        ACCEPTED = 202
         NO_CONTENT = 204
         BAD_REQUEST = 400
         UNAUTHORIZED = 401

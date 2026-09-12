@@ -8,7 +8,6 @@ services:
       - .env
     environment:
       - PYTHONUNBUFFERED=1
-      - SECRET_KEY=${SECRET_KEY:-changeme}
     volumes:
       - ./:/app
     networks:

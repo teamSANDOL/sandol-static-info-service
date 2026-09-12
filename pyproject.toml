@@ -10,6 +10,8 @@ dependencies = [
     "fastapi (>=0.115.12,<0.116.0)",
     "httpx (>=0.28.1,<0.29.0)",
     "uvicorn (>=0.34.1,<0.35.0)",
+    "pdfplumber>=0.11.4",
+    "apscheduler>=3.11.0",
 ]
 
 [dependency-groups]
@@ -88,4 +90,4 @@ indent-style = "space"
 convention = "google"
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**/*.py" = ["D", "S101", "PLR2004"]
+"tests/**/*.py" = ["D", "S101", "S105", "D103", "PLR2004"]
