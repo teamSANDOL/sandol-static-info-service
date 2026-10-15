@@ -108,8 +108,17 @@ async def sync_shuttle_timetables(force: bool = False) -> list[str]:
     return [doc["place"]] if doc is not None else []
 
 
-async def save_user_timetable(place: str, trips: list[ParsedTrip]) -> dict:
-    """사용자가 직접 입력한 시간표를 저장합니다. 기존 출처 필드는 있으면 보존합니다."""
+async def save_user_timetable(
+    place: str,
+    trips: list[ParsedTrip],
+    title: str | None,
+    updated_by: str | None = None,
+) -> dict:
+    """관리자가 직접 입력한 시간표를 저장합니다.
+
+    같은 place 안에서는 수동 입력이 PDF보다 우선합니다(source="user"는 force 없는
+    동기화가 덮어쓰지 않음). title은 입력값으로 바꾸고, PDF 출처 필드는 있으면 보존합니다.
+    """
     shuttle_trips = [
         ShuttleTrip(**t.model_dump(), **SHUTTLE_DIRECTIONS[t.direction]) for t in trips
     ]
@@ -118,13 +127,14 @@ async def save_user_timetable(place: str, trips: list[ParsedTrip]) -> dict:
         existing = store.get(place)
         doc = {
             "place": place,
-            # 출처 정보(title/pdf_*)는 기존 문서가 있으면 그대로 물려받는다
-            "title": existing.get("title") if existing else None,
+            "title": title,
+            # PDF 출처 정보는 기존 문서가 있으면 그대로 물려받는다
             "pdf_url": existing.get("pdf_url") if existing else None,
             "pdf_sha256": existing.get("pdf_sha256") if existing else None,
             "parsed_at": existing.get("parsed_at") if existing else None,
             "source": "user",
             "updated_at": datetime.now(timezone.utc).isoformat(),
+            "updated_by": updated_by,
             "trips": [t.model_dump() for t in shuttle_trips],
         }
         store[place] = doc
