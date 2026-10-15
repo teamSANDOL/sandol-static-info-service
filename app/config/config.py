@@ -45,6 +45,25 @@ class Config:
     DATA_DIR: str = os.getenv("DATA_DIR", os.path.join(SERVICE_DIR, "data"))
     SHUTTLE_TIMETABLE_PATH: str = os.path.join(DATA_DIR, "shuttle_timetable.json")
     SHUTTLE_PDF_DIR: str = os.path.join(DATA_DIR, "shuttle_pdf")
+    # TUK World(총학생회 제휴 식당): SQLite + 이미지 디렉터리 (compose에서 볼륨 마운트)
+    TUK_WORLD_DIR: str = os.getenv("TUK_WORLD_DIR", os.path.join(DATA_DIR, "tuk_world"))
+    TUK_WORLD_DB_PATH: str = os.path.join(TUK_WORLD_DIR, "tuk_world.db")
+    TUK_WORLD_IMAGE_DIR: str = os.path.join(TUK_WORLD_DIR, "images")
+    TUK_WORLD_MAX_IMAGE_BYTES: int = int(
+        os.getenv("TUK_WORLD_MAX_IMAGE_BYTES", str(5 * 1024 * 1024))
+    )
+
+    # 쓰기 API 보호용 Keycloak 설정. KC_SERVER_URL이 비어 있으면 쓰기는 모두 거부된다.
+    # KC_SERVER_URL은 토큰 iss와 같은 공개 주소, KC_JWKS_URL은 내부망 주소로 바꿀 수 있다.
+    KC_SERVER_URL: str = (
+        os.getenv("KC_SERVER_URL", "").rstrip("/") + "/"
+        if os.getenv("KC_SERVER_URL")
+        else ""
+    )
+    KC_REALM: str = os.getenv("KC_REALM", "Sandori")
+    KC_ADMIN_ROLE: str = os.getenv("KC_ADMIN_ROLE", "global_admin")
+    KC_JWKS_URL: str = os.getenv("KC_JWKS_URL", "")
+
     school_info_path: str = os.path.join(
         os.path.abspath(os.path.join(CONFIG_DIR, "school_info.json"))
     )
