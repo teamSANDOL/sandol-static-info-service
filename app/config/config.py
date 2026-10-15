@@ -64,8 +64,27 @@ class Config:
     KC_ADMIN_ROLE: str = os.getenv("KC_ADMIN_ROLE", "global_admin")
     KC_JWKS_URL: str = os.getenv("KC_JWKS_URL", "")
 
-    school_info_path: str = os.path.join(
-        os.path.abspath(os.path.join(CONFIG_DIR, "school_info.json"))
+    # 관리자 화면(sqladmin, /static-info/admin). 아래 값이 하나라도 비면 마운트하지 않는다.
+    ROOT_PATH: str = "/static-info"
+    ADMIN_PANEL_ENABLED: bool = (
+        os.getenv("ADMIN_PANEL_ENABLED", "False").lower() == "true"
+    )
+    # static-info 전용 confidential client. redirect URI는
+    # {STATIC_INFO_PUBLIC_BASE_URL}/admin-oauth/callback 으로 Keycloak에 등록한다.
+    KC_CLIENT_ID: str = os.getenv("KC_CLIENT_ID", "")
+    KC_CLIENT_SECRET: str = os.getenv("KC_CLIENT_SECRET", "")
+    # 컨테이너에서 공개 주소로 토큰 교환이 안 될 때 내부 주소로 지정 (KC_JWKS_URL과 같은 용도)
+    KC_TOKEN_URL: str = os.getenv("KC_TOKEN_URL", "")
+    STATIC_INFO_PUBLIC_BASE_URL: str = os.getenv(
+        "STATIC_INFO_PUBLIC_BASE_URL", ""
+    ).rstrip("/")
+    # 세션·state 쿠키 암호화용 Fernet 키
+    ADMIN_SESSION_KEY: str = os.getenv("ADMIN_SESSION_KEY", "")
+    ADMIN_SESSION_TTL_SECONDS: int = int(os.getenv("ADMIN_SESSION_TTL_SECONDS", "3600"))
+
+    # 조직도 원본. 관리자 편집(원자적 교체)을 위해 운영에선 디렉터리째 rw 마운트한다.
+    SCHOOL_INFO_PATH: str = os.getenv(
+        "SCHOOL_INFO_PATH", os.path.join(CONFIG_DIR, "school_info.json")
     )
 
     class HttpStatus:
@@ -103,5 +122,6 @@ class Config:
 
     @staticmethod
     def get_school_info_file():
-        with open(Config.school_info_path, "r", encoding="utf-8") as f:
+        """조직도 원본(SCHOOL_INFO_PATH)을 읽어 dict로 반환합니다."""
+        with open(Config.SCHOOL_INFO_PATH, "r", encoding="utf-8") as f:
             return json.load(f)

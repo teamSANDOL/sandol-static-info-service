@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 import uvicorn
 
+from app.admin import mount_admin
 from app.models.tuk_world import init_db
 from app.routers import (
     bus_router,
@@ -42,6 +43,7 @@ app.include_router(bus_router)
 app.include_router(meal_router)
 app.include_router(organization_router)
 app.include_router(tuk_world_router)
+mount_admin(app)
 
 
 @app.get("/")
