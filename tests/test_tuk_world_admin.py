@@ -112,7 +112,10 @@ def test_image_upload_delete_and_restaurant_delete(client: TestClient) -> None:
         assert len(imgs) == 2
         first, second = imgs[0].id, imgs[1].id
         paths = [image_path(i.filename) for i in imgs]
-        assert all(os.path.exists(p) and "a.png" not in p for p in paths)
+        assert all(
+            os.path.exists(p) and os.path.basename(p) not in ("a.png", "b.png")
+            for p in paths
+        )
     assert str(first) in client.get(f"{P}/restaurant/details/{rid}").text
     assert client.delete(f"{P}/restaurant-image/delete?pks={first}").status_code == 200
     assert not os.path.exists(paths[0]) and os.path.exists(paths[1])
