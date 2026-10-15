@@ -14,12 +14,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from PIL import Image, ImageDraw  # noqa: E402
 from sqlalchemy import select  # noqa: E402
 
-from app.models.tuk_world import (  # noqa: E402
-    Restaurant,
-    RestaurantImage,
-    SessionLocal,
-    init_db,
-)
+from app.database import SessionLocal, init_db  # noqa: E402
+from app.models.tuk_world import Restaurant, RestaurantImage  # noqa: E402
 from app.utils.tuk_world_images import save_image, validate_image  # noqa: E402
 
 # (이름, 위도, 경도, 할인 정보). 학교(경기 시흥시 정왕동) 주변 임의 좌표.

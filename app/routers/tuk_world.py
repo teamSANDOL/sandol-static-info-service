@@ -19,13 +19,14 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import Config, logger
-from app.models.tuk_world import Restaurant, RestaurantImage, get_db
+from app.models.tuk_world import Restaurant, RestaurantImage
 from app.schemas.tuk_world import (
     RestaurantCreate,
     RestaurantImageOut,
     RestaurantOut,
     RestaurantUpdate,
 )
+from app.utils.db import get_db
 from app.utils.keycloak_auth import require_admin
 from app.utils.tuk_world_images import (
     ImageValidationError,

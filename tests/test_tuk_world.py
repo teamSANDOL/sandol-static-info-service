@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 from PIL import Image
 
 from app.config import Config
-from app.models.tuk_world import init_db
+from app.database import init_db
 from app.utils import keycloak_auth
 from main import app
 
