@@ -127,9 +127,14 @@ def check_hash_guard():
 def check_user_override():
     """사용자 수정본은 ingest가 건드리지 않고, force=True일 때만 덮어씁니다."""
     parsed_trip = ParsedTrip(**PARSED[0])
-    asyncio.run(st.save_user_timetable("사용자수정", [parsed_trip]))
+    asyncio.run(
+        st.save_user_timetable("사용자수정", [parsed_trip], "직접 제목", updated_by="sub-1")
+    )
     store = st.load_store()
     assert store["사용자수정"]["source"] == "user"
+    # PUT 본문 title이 버려지던 버그(F7) 회귀 방지
+    assert store["사용자수정"]["title"] == "직접 제목"
+    assert store["사용자수정"]["updated_by"] == "sub-1"
 
     with (
         patch.object(st, "fetch_shuttle_pdf", _fetch(place="사용자수정")),
@@ -255,6 +260,16 @@ def run():
     assert st.query_trips(store, on_date=date(2026, 1, 5)) == []
 
     print("OK")
+
+
+def test_pipeline(tmp_path, monkeypatch):
+    """pytest 진입점. 다른 테스트가 Config를 먼저 import해도 임시 경로를 쓰게 고정합니다."""
+    monkeypatch.setattr(st.Config, "DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        st.Config, "SHUTTLE_TIMETABLE_PATH", str(tmp_path / "shuttle_timetable.json")
+    )
+    monkeypatch.setattr(st.Config, "SHUTTLE_PDF_DIR", str(tmp_path / "shuttle_pdf"))
+    run()
 
 
 if __name__ == "__main__":
