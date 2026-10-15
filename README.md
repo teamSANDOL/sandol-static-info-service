@@ -111,20 +111,20 @@ trip 1건의 필드: `route`, `direction`, `origin`, `destination`, `via[]`, `da
 
 ## 운영 배포 (루트 compose)
 
-데이터는 호스트 `${SANDOL_DATA_DIR}/static-info` 디렉터리 하나를 컨테이너 `/app/data`(`DATA_DIR`)에 rw로 마운트해 보관합니다. 컨테이너를 다시 만들어도 아래 파일은 유지됩니다.
+데이터는 호스트 `${SANDOL_DATA_DIR}/static-info` 디렉터리 하나를 컨테이너 `/app/static-info`에 rw로 마운트해 보관합니다(`DATA_DIR=/app/static-info/data`, `SCHOOL_INFO_PATH=/app/static-info/school_info.json`). 컨테이너를 다시 만들어도 아래 파일은 유지됩니다.
 
 | 파일 | 내용 |
 |---|---|
-| `school_info.json` | 조직도 원본(`SCHOOL_INFO_PATH=/app/data/school_info.json`). 관리자 화면에서 저장하면 같은 디렉터리에 `.bak`, `.meta.json`이 생깁니다 |
-| `shuttle_timetable.json`, `shuttle_pdf/` | 셔틀 시간표(사용자 수정본 포함)와 원본 PDF |
-| `tuk_world/` | TUK World SQLite와 이미지 |
+| `school_info.json` | 조직도 원본. 관리자 화면에서 저장하면 같은 디렉터리에 `.bak`, `.meta.json`이 생깁니다 |
+| `data/shuttle_timetable.json`, `data/shuttle_pdf/` | 셔틀 시간표(사용자 수정본 포함)와 원본 PDF |
+| `data/tuk_world/` | TUK World SQLite와 이미지 |
 
 조직도는 임시 파일을 쓴 뒤 `os.replace`로 교체하므로 파일 단위 바인드가 아니라 디렉터리 마운트가 필요합니다.
 
 ### 관리자 화면 (`/static-info/admin`)
 
 1. Keycloak 운영 콘솔(realm `Sandori`)에서 static-info 전용 confidential client를 만들고, Standard flow와 PKCE(S256)를 켜고, redirect URI `https://<서비스 도메인>/static-info/admin-oauth/callback`을 등록합니다.
-2. 서버 `sandol-static-info-service/.env`에 `KC_CLIENT_ID`, `KC_CLIENT_SECRET`, `ADMIN_SESSION_KEY`(Fernet 키)를 넣습니다. `ADMIN_PANEL_ENABLED`, `STATIC_INFO_PUBLIC_BASE_URL`, `KC_SERVER_URL`, `KC_JWKS_URL`, `KC_TOKEN_URL`은 루트 compose가 `SERVICE_DOMAIN` 기준으로 채웁니다.
+2. 서버 `sandol-static-info-service/.env`(루트 compose의 env_file)에 `ADMIN_PANEL_ENABLED=true`, `KC_CLIENT_ID`, `KC_CLIENT_SECRET`, `ADMIN_SESSION_KEY`(Fernet 키)를 넣습니다. `STATIC_INFO_PUBLIC_BASE_URL`, `KC_SERVER_URL`, `KC_JWKS_URL`, `KC_TOKEN_URL`, `DATA_DIR`, `SCHOOL_INFO_PATH`는 루트 compose가 `SERVICE_DOMAIN` 기준으로 채웁니다.
 3. `docker compose up -d --no-deps static-info-service`로 재생성합니다.
 
 값이 하나라도 비어 있으면 관리자 화면은 마운트되지 않고 `/static-info/admin`은 404입니다(fail-closed). 로그인은 `global_admin` 롤이 있는 계정만 성공하고, 롤은 로그인할 때만 확인하므로 롤을 회수해도 세션 수명(`ADMIN_SESSION_TTL_SECONDS`, 기본 3600초) 동안은 접근이 남습니다.
