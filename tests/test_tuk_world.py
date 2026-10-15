@@ -167,3 +167,57 @@ def test_image_upload_too_large(monkeypatch: pytest.MonkeyPatch) -> None:
         headers=ADMIN,
     )
     assert res.status_code == 413
+
+
+def test_category_address_and_filter() -> None:
+    body = {**BODY, "category": "식당", "address": "경기도 시흥시 산기대학로 237"}
+    rid = client.post("/tuk-world/restaurants", json=body, headers=ADMIN).json()["id"]
+    other = client.post(
+        "/tuk-world/restaurants", json={**BODY, "category": "술집"}, headers=ADMIN
+    ).json()["id"]
+    got = client.get(f"/tuk-world/restaurants/{rid}").json()
+    assert (got["category"], got["address"]) == (body["category"], body["address"])
+    ids = {r["id"] for r in client.get("/tuk-world/restaurants?category=식당").json()}
+    assert rid in ids and other not in ids
+    res = client.patch(
+        f"/tuk-world/restaurants/{rid}", json={"category": None}, headers=ADMIN
+    )
+    assert res.status_code == 200 and res.json()["category"] is None
+
+
+def test_init_db_adds_missing_columns_idempotently(tmp_path: Any) -> None:
+    from sqlalchemy import create_engine, inspect, text
+
+    from app.models import tuk_world as tw
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'old.db'}")
+    with engine.begin() as conn:  # TASK-94 시점 스키마(분류·주소 없음)
+        conn.execute(
+            text(
+                "CREATE TABLE tuk_world_restaurant (id INTEGER PRIMARY KEY, "
+                "name VARCHAR(100) NOT NULL, naver_map_url VARCHAR(500), "
+                "kakao_map_url VARCHAR(500), latitude FLOAT NOT NULL, "
+                "longitude FLOAT NOT NULL, discount_info TEXT, "
+                "created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL)"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO tuk_world_restaurant VALUES "
+                "(1, 'a', NULL, NULL, 1, 2, 'd', '2026-01-01', '2026-01-01')"
+            )
+        )
+    original = tw.engine
+    tw.engine = engine
+    try:
+        tw.init_db()
+        tw.init_db()
+    finally:
+        tw.engine = original
+    cols = {c["name"] for c in inspect(engine).get_columns("tuk_world_restaurant")}
+    assert {"category", "address"} <= cols
+    with engine.connect() as conn:
+        row = conn.execute(
+            text("SELECT name, category FROM tuk_world_restaurant")
+        ).one()
+    assert tuple(row) == ("a", None)

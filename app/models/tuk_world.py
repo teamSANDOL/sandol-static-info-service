@@ -4,7 +4,17 @@ import os
 from collections.abc import Iterator
 from datetime import UTC, datetime
 
-from sqlalchemy import DateTime, Float, ForeignKey, String, Text, create_engine
+from sqlalchemy import (
+    DateTime,
+    Float,
+    ForeignKey,
+    String,
+    Text,
+    create_engine,
+    inspect,
+    text,
+)
+from sqlalchemy.schema import CreateColumn
 from sqlalchemy.orm import (
     DeclarativeBase,
     Mapped,
@@ -32,6 +42,9 @@ class Restaurant(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(100))
+    # 분류(예: 식당·술집·여가). 자유 문자열
+    category: Mapped[str | None] = mapped_column(String(20), index=True)
+    address: Mapped[str | None] = mapped_column(String(200))
     naver_map_url: Mapped[str | None] = mapped_column(String(500))
     kakao_map_url: Mapped[str | None] = mapped_column(String(500))
     latitude: Mapped[float] = mapped_column(Float)
@@ -72,8 +85,32 @@ SessionLocal = sessionmaker(engine, expire_on_commit=False)
 
 def init_db() -> None:
     """테이블이 없으면 생성합니다."""
-    # ponytail: create_all만 사용. 컬럼 변경이 생기면 alembic 도입.
+    # ponytail: create_all + 누락 nullable 컬럼 ADD COLUMN만. 타입 변경·삭제가
+    # 필요해지면 alembic 도입.
     Base.metadata.create_all(engine)
+    _add_missing_columns()
+
+
+def _add_missing_columns() -> None:
+    """기존 테이블에 모델에는 있고 DB에는 없는 nullable 컬럼을 추가합니다(멱등)."""
+    insp = inspect(engine)
+    with engine.begin() as conn:
+        for table in Base.metadata.sorted_tables:
+            existing = {c["name"] for c in insp.get_columns(table.name)}
+            for column in table.columns:
+                if column.name in existing:
+                    continue
+                if not column.nullable:
+                    raise RuntimeError(f"NOT NULL 컬럼은 자동 추가 불가: {column}")
+                ddl = CreateColumn(column).compile(dialect=engine.dialect)
+                conn.execute(text(f"ALTER TABLE {table.name} ADD COLUMN {ddl}"))
+                if column.index:
+                    conn.execute(
+                        text(
+                            f"CREATE INDEX IF NOT EXISTS ix_{table.name}_{column.name}"
+                            f" ON {table.name} ({column.name})"
+                        )
+                    )
 
 
 def get_db() -> Iterator[Session]:

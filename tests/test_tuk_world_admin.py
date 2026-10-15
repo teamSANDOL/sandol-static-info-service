@@ -162,3 +162,19 @@ def test_anonymous_redirected(
     monkeypatch.setattr(admin_auth, "admin_sub", lambda r: None)  # 세션 없음
     res = client.get(f"{P}/restaurant/list")
     assert res.status_code == 302
+
+
+def test_category_address_form_and_filter(client: TestClient) -> None:
+    rid = _create(client, category="술집", address="경기도 시흥시 어딘가 1")
+    other = _create(client, category="식당", name="다른집")
+    with SessionLocal() as db:
+        r = db.get(Restaurant, rid)
+        assert r is not None and (r.category, r.address) == (
+            "술집",
+            "경기도 시흥시 어딘가 1",
+        )
+        o = db.get(Restaurant, other)
+        assert o is not None and o.address is None
+    page = client.get(f"{P}/restaurant/list?category=술집").text
+    assert "경기도 시흥시 어딘가 1" in page and "다른집" not in page
+    assert "다른집" in client.get(f"{P}/restaurant/list?search=식당").text

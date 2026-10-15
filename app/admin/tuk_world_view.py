@@ -8,6 +8,7 @@ from typing import Any
 
 from markupsafe import Markup, escape
 from sqladmin import ModelView
+from sqladmin.filters import AllUniqueStringValuesFilter
 from starlette.datastructures import UploadFile
 from starlette.requests import Request
 from wtforms import FileField, FloatField, Form
@@ -45,12 +46,21 @@ class RestaurantAdmin(ModelView, model=Restaurant):
     name = "제휴 식당"
     name_plural = "제휴 식당"
     icon = "fa-solid fa-utensils"
-    column_list = [Restaurant.id, Restaurant.name, Restaurant.images]
-    column_searchable_list = [Restaurant.name]
+    column_list = [
+        Restaurant.id,
+        Restaurant.category,
+        Restaurant.name,
+        Restaurant.address,
+        Restaurant.images,
+    ]
+    column_searchable_list = [Restaurant.name, Restaurant.category, Restaurant.address]
+    column_filters = [AllUniqueStringValuesFilter(Restaurant.category, title="분류")]
     column_default_sort = [(Restaurant.id, True)]
     column_details_list = [
         Restaurant.id,
+        Restaurant.category,
         Restaurant.name,
+        Restaurant.address,
         Restaurant.naver_map_url,
         Restaurant.kakao_map_url,
         Restaurant.latitude,
@@ -63,7 +73,9 @@ class RestaurantAdmin(ModelView, model=Restaurant):
     column_formatters = {Restaurant.images: _thumbs}
     column_formatters_detail = column_formatters
     form_columns = [
+        Restaurant.category,
         Restaurant.name,
+        Restaurant.address,
         Restaurant.naver_map_url,
         Restaurant.kakao_map_url,
         Restaurant.latitude,

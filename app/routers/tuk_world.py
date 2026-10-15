@@ -10,6 +10,7 @@ from fastapi import (
     Depends,
     File,
     HTTPException,
+    Query,
     Request,
     Response,
     UploadFile,
@@ -52,6 +53,8 @@ def _to_out(request: Request, restaurant: Restaurant) -> RestaurantOut:
     return RestaurantOut(
         id=restaurant.id,
         name=restaurant.name,
+        category=restaurant.category,
+        address=restaurant.address,
         naver_map_url=restaurant.naver_map_url,
         kakao_map_url=restaurant.kakao_map_url,
         latitude=restaurant.latitude,
@@ -81,9 +84,18 @@ def _get_or_404(db: Session, restaurant_id: int) -> Restaurant:
 @router.get(
     "/restaurants", summary="제휴 식당 목록", response_model=list[RestaurantOut]
 )
-def list_restaurants(request: Request, db: Db) -> list[RestaurantOut]:
-    """등록된 제휴 식당 전체를 id 순으로 반환합니다."""
-    rows = db.scalars(select(Restaurant).order_by(Restaurant.id)).all()
+def list_restaurants(
+    request: Request,
+    db: Db,
+    category: Annotated[
+        str | None, Query(description="분류 정확히 일치 (예: 식당·술집·여가)")
+    ] = None,
+) -> list[RestaurantOut]:
+    """등록된 제휴 식당을 id 순으로 반환합니다. category를 주면 그 분류만."""
+    query = select(Restaurant).order_by(Restaurant.id)
+    if category is not None:
+        query = query.where(Restaurant.category == category)
+    rows = db.scalars(query).all()
     return [_to_out(request, r) for r in rows]
 
 
