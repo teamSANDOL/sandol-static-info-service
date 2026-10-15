@@ -40,12 +40,18 @@ def _setup(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(keycloak_auth, "_jwks_client", lambda: _FakeJwks())
 
 
-def token(roles: list[str], key: Any = KEY, iss: str | None = None) -> dict[str, str]:
+def token(
+    roles: list[str],
+    key: Any = KEY,
+    iss: str | None = None,
+    **claims: Any,
+) -> dict[str, str]:
     payload = {
         "sub": "admin-sub",
         "iss": iss or keycloak_auth.expected_issuer(),
         "exp": int(time.time()) + 300,
         "realm_access": {"roles": roles},
+        **claims,
     }
     return {"Authorization": f"Bearer {jwt.encode(payload, key, algorithm='RS256')}"}
 
@@ -167,3 +173,77 @@ def test_image_upload_too_large(monkeypatch: pytest.MonkeyPatch) -> None:
         headers=ADMIN,
     )
     assert res.status_code == 413
+
+
+def test_timestamps_are_utc_aware() -> None:
+    rid = create()
+    body = client.get(f"/tuk-world/restaurants/{rid}").json()
+    for value in (body["created_at"], body["updated_at"]):
+        assert value.endswith(("Z", "+00:00")), value
+
+
+def test_image_upload_and_delete_touch_restaurant_updated_at() -> None:
+    rid = create()
+    url = f"/tuk-world/restaurants/{rid}"
+    before = client.get(url).json()["updated_at"]
+    time.sleep(0.01)
+    res = client.post(
+        f"{url}/images",
+        files={"file": ("a.png", png_bytes(), "image/png")},
+        headers=ADMIN,
+    )
+    uploaded = res.json()["updated_at"]
+    assert uploaded > before
+    time.sleep(0.01)
+    image_id = res.json()["images"][0]["id"]
+    client.delete(f"/tuk-world/images/{image_id}", headers=ADMIN)
+    assert client.get(url).json()["updated_at"] > uploaded
+
+
+def test_public_base_url_makes_image_url_absolute(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rid = create()
+    monkeypatch.setattr(Config, "PUBLIC_BASE_URL", "https://sandori.kr")
+    res = client.post(
+        f"/tuk-world/restaurants/{rid}/images",
+        files={"file": ("a.png", png_bytes(), "image/png")},
+        headers=ADMIN,
+    )
+    url = res.json()["images"][0]["url"]
+    assert url.startswith("https://sandori.kr") and "/tuk-world/images/" in url
+
+
+@pytest.mark.parametrize(
+    ("claims", "status"),
+    [
+        ({"azp": "kakao-bot"}, 201),
+        ({"aud": "kakao-bot"}, 201),
+        ({"aud": ["account", "kakao-bot"]}, 201),
+        ({"azp": "other", "aud": ["account"]}, 401),
+        ({}, 401),
+    ],
+)
+def test_allowed_clients(
+    monkeypatch: pytest.MonkeyPatch, claims: dict[str, Any], status: int
+) -> None:
+    monkeypatch.setattr(Config, "KC_ALLOWED_CLIENTS", ["kakao-bot"])
+    res = client.post(
+        "/tuk-world/restaurants",
+        json=BODY,
+        headers=token(["global_admin"], **claims),
+    )
+    assert res.status_code == status
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("POST", "/bus/timetable/refresh"),
+        ("PUT", "/bus/timetable/x"),
+        ("DELETE", "/bus/timetable/x"),
+    ],
+)
+def test_bus_write_requires_token(method: str, path: str) -> None:
+    res = client.request(method, path, json={"trips": []} if method == "PUT" else None)
+    assert res.status_code == 401
