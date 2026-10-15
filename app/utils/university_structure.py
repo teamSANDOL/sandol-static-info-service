@@ -1,6 +1,11 @@
 """학교 조직 구조를 관리하는 모듈"""
 
-from typing import Dict, Optional, List, Union, Literal
+import json
+import os
+import shutil
+import tempfile
+from datetime import datetime, timezone
+from typing import Any, Dict, Optional, List, Union, Literal
 from collections import deque
 
 from pydantic import BaseModel
@@ -155,6 +160,70 @@ class UniversityStructure(BaseModel):
 def get_tukorea_structure() -> UniversityStructure:
     """한국공학대학교 조직 구조를 반환"""
     return UniversityStructure.from_dict(Config.get_school_info_file())
+
+
+def parse_school_info(text: str) -> tuple[dict[str, Any], UniversityStructure]:
+    """편집 텍스트를 검증합니다. 기존 로더가 읽을 수 없으면 ValueError.
+
+    Args:
+        text: 조직도 JSON 원문.
+
+    Returns:
+        (파싱된 dict, 로더가 만든 구조) 튜플.
+    """
+    try:
+        data = json.loads(text)
+    except (json.JSONDecodeError, RecursionError) as exc:
+        raise ValueError(f"JSON 문법 오류: {exc}") from exc
+    if not isinstance(data, dict) or not data:
+        raise ValueError("최상위는 비어 있지 않은 JSON 객체여야 합니다.")
+    try:
+        return data, UniversityStructure.from_dict(data)
+    except (ValueError, TypeError, AttributeError, RecursionError) as exc:
+        raise ValueError(f"조직도 구조 오류: {exc}") from exc
+
+
+def _atomic_write(path: str, text: str) -> None:
+    """같은 디렉터리의 임시 파일에 쓴 뒤 os.replace로 교체합니다."""
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path) or ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+        os.replace(tmp, path)
+    except BaseException:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
+
+
+def save_school_info(text: str, path: str, updated_by: str | None) -> None:
+    """검증 후 조직도를 원자적으로 저장합니다. 직전 파일은 `<path>.bak` 1개만 보관.
+
+    잘못된 입력이면 ValueError, 쓰기 실패(읽기 전용 등)면 OSError이며
+    두 경우 모두 기존 파일은 그대로입니다.
+    """
+    data, _ = parse_school_info(text)
+    if os.path.exists(path):
+        shutil.copy2(path, path + ".bak")
+    _atomic_write(path, json.dumps(data, ensure_ascii=False, indent=4) + "\n")
+    meta = {
+        "updated_by": updated_by,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    try:  # 메타는 부가 정보라 실패해도 저장 성공으로 본다
+        _atomic_write(path + ".meta.json", json.dumps(meta, ensure_ascii=False))
+    except OSError:
+        pass
+
+
+def read_school_info_meta(path: str) -> dict[str, Any]:
+    """마지막 저장 메타(updated_by, updated_at). 없으면 빈 dict."""
+    try:
+        with open(path + ".meta.json", encoding="utf-8") as f:
+            meta = json.load(f)
+        return meta if isinstance(meta, dict) else {}
+    except (OSError, ValueError):
+        return {}
 
 
 if __name__ == "__main__":
