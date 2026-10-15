@@ -624,6 +624,7 @@ dev = [
     { name = "pytest" },
     { name = "ruff" },
     { name = "types-pytz" },
+    { name = "types-wtforms" },
 ]
 
 [package.metadata]
@@ -649,6 +650,7 @@ dev = [
     { name = "pytest", specifier = ">=9.1.1" },
     { name = "ruff", specifier = ">=0.9,<0.10" },
     { name = "types-pytz", specifier = ">=2025.1.0.20250204,<2026" },
+    { name = "types-wtforms", specifier = ">=3.2.1.20260518" },
 ]
 
 [[package]]
@@ -713,6 +715,18 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/4b/66/38c89861242f2c61c8315ddbcc7d7bbf64979f4b0bdc48db0ba62aeec330/types_pytz-2025.2.0.20250326.tar.gz", hash = "sha256:deda02de24f527066fc8d6a19e284ab3f3ae716a42b4adb6b40e75e408c08d36", size = 10595, upload-time = "2025-03-26T02:53:12.504Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/4e/e0/17f3a6670db5c95dc195f346e2e7290f22ba8327c188133959389b578cbd/types_pytz-2025.2.0.20250326-py3-none-any.whl", hash = "sha256:3c397fd1b845cd2b3adc9398607764ced9e578a98a5d1fbb4a9bc9253edfb162", size = 10222, upload-time = "2025-03-26T02:53:11.145Z" },
+]
+
+[[package]]
+name = "types-wtforms"
+version = "3.2.1.20260518"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "markupsafe" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/bf/f0/0c84f7175c56089ba0c000d1eb4f20b144721b7446b90280625f3c8ce23b/types_wtforms-3.2.1.20260518.tar.gz", hash = "sha256:05fb7adfc8cdd72c7b597e20b74f6270511ca492a80953805f25ee7d1cfd1282", size = 17505, upload-time = "2026-05-18T06:07:30.769Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/6e/94/0da3294e8c4fd4b64e96d57f7a768fb57e3b2d77ac0aed142c25fe1f28d5/types_wtforms-3.2.1.20260518-py3-none-any.whl", hash = "sha256:193377e60e715920b47481fbc62a7f3796045d0492e02a46319c5064eee81e23", size = 24303, upload-time = "2026-05-18T06:07:29.866Z" },
 ]
 
 [[package]]

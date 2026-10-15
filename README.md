@@ -32,6 +32,7 @@ cp .env.example .env
 
 - `DEBUG`: 로깅 레벨 제어 (`true`/`false`)
 - `DATA_DIR`: 파싱 결과(`shuttle_timetable.json`)와 원본 PDF 보관 위치 (기본 `./data`, gitignore)
+- 그 밖의 값(Keycloak, 관리자 화면, TUK World, `SCHOOL_INFO_PATH`)은 `.env.example`의 주석을 참고하세요.
 
 ## Docker 실행(추천)
 
@@ -90,6 +91,8 @@ trip 1건의 필드: `route`, `direction`, `origin`, `destination`, `via[]`, `da
 
 ## 주요 API
 
+셔틀 시간표 쓰기(PUT/DELETE/refresh)와 TUK World 쓰기는 `Authorization: Bearer <Keycloak access token>`이 필요합니다. 토큰은 JWKS로 서명을 검증하고 realm 롤 `KC_ADMIN_ROLE`(기본 `global_admin`)을 확인합니다. `KC_SERVER_URL`이 비어 있으면 쓰기는 모두 거부됩니다(503). 토큰이 없거나 무효면 401, 롤이 없으면 403입니다.
+
 `main.py`에서 `root_path=/static-info`를 사용하므로, compose 기준 모든 엔드포인트는 `/static-info` 하위로 접근합니다.
 
 - `GET /static-info/health`
@@ -98,10 +101,32 @@ trip 1건의 필드: `route`, `direction`, `origin`, `destination`, `via[]`, `da
 - `GET /static-info/meal/images` (주간 식단표 iBook 페이지 이미지)
 - `GET /static-info/meal/image/{index}`
 - `GET /static-info/bus/timetable` — iBook 원본 PDF를 파싱한 셔틀 시간표. 쿼리 `route`(부분 일치), `origin`/`destination`(정왕역·본교·제2캠퍼스, 경유지 포함), `day_type`(평일/토요일/일요일/주말/공휴일). 기본은 **오늘(KST) 기준 운행 기간에 해당하는 trip만** 반환하며, `date`(`YYYY-MM-DD`)로 다른 날짜를 조회하거나 `all=true`로 기간 필터 없이 전체를 조회할 수 있습니다. 방학 중 통합표/개별표 중복은 (운행일·방향·시각·운행 기간) 기준으로 자동 제거됩니다
-- `POST /static-info/bus/timetable/refresh` — iBook 원본 PDF를 백그라운드에서 동기화(변경 시에만 재파싱), 즉시 202 반환. 쿼리 `force=true`면 사용자 수정본과 해시 가드를 모두 무시하고 강제 재파싱. 기동 시 자동 동기화되므로 최초 적재용 수동 호출은 불필요, 결과는 잠시 후 `GET /bus/timetable`로 확인
-- `PUT /static-info/bus/timetable/{place}` — place의 시간표를 사용자가 직접 입력해 저장 (body `{"trips": [...]}`). 이후 cron/refresh가 덮어쓰지 않음
-- `DELETE /static-info/bus/timetable/{place}` — 사용자 수정본을 삭제해 다시 PDF 파싱 대상으로 되돌림
+- `POST /static-info/bus/timetable/refresh` (관리자 Bearer) — iBook 원본 PDF를 백그라운드에서 동기화(변경 시에만 재파싱), 즉시 202 반환. 쿼리 `force=true`면 사용자 수정본과 해시 가드를 모두 무시하고 강제 재파싱. 기동 시 자동 동기화되므로 최초 적재용 수동 호출은 불필요, 결과는 잠시 후 `GET /bus/timetable`로 확인
+- `PUT /static-info/bus/timetable/{place}` (관리자 Bearer) — place의 시간표를 사용자가 직접 입력해 저장 (body `{"title": "...", "trips": [...]}`, `title`은 보낸 값으로 저장되며 생략하면 null). 이후 cron/refresh가 덮어쓰지 않음
+- `DELETE /static-info/bus/timetable/{place}` (관리자 Bearer) — 사용자 수정본을 삭제해 다시 PDF 파싱 대상으로 되돌림
 - `GET /static-info/organization/tree`
 - `GET /static-info/organization/search/{name}`
 - `GET /static-info/organization/{path}/children`
 - `GET /static-info/organization/{path}`
+
+## 운영 배포 (루트 compose)
+
+데이터는 호스트 `${SANDOL_DATA_DIR}/static-info` 디렉터리 하나를 컨테이너 `/app/data`(`DATA_DIR`)에 rw로 마운트해 보관합니다. 컨테이너를 다시 만들어도 아래 파일은 유지됩니다.
+
+| 파일 | 내용 |
+|---|---|
+| `school_info.json` | 조직도 원본(`SCHOOL_INFO_PATH=/app/data/school_info.json`). 관리자 화면에서 저장하면 같은 디렉터리에 `.bak`, `.meta.json`이 생깁니다 |
+| `shuttle_timetable.json`, `shuttle_pdf/` | 셔틀 시간표(사용자 수정본 포함)와 원본 PDF |
+| `tuk_world/` | TUK World SQLite와 이미지 |
+
+조직도는 임시 파일을 쓴 뒤 `os.replace`로 교체하므로 파일 단위 바인드가 아니라 디렉터리 마운트가 필요합니다.
+
+### 관리자 화면 (`/static-info/admin`)
+
+1. Keycloak 운영 콘솔(realm `Sandori`)에서 static-info 전용 confidential client를 만들고, Standard flow와 PKCE(S256)를 켜고, redirect URI `https://<서비스 도메인>/static-info/admin-oauth/callback`을 등록합니다.
+2. 서버 `sandol-static-info-service/.env`에 `KC_CLIENT_ID`, `KC_CLIENT_SECRET`, `ADMIN_SESSION_KEY`(Fernet 키)를 넣습니다. `ADMIN_PANEL_ENABLED`, `STATIC_INFO_PUBLIC_BASE_URL`, `KC_SERVER_URL`, `KC_JWKS_URL`, `KC_TOKEN_URL`은 루트 compose가 `SERVICE_DOMAIN` 기준으로 채웁니다.
+3. `docker compose up -d --no-deps static-info-service`로 재생성합니다.
+
+값이 하나라도 비어 있으면 관리자 화면은 마운트되지 않고 `/static-info/admin`은 404입니다(fail-closed). 로그인은 `global_admin` 롤이 있는 계정만 성공하고, 롤은 로그인할 때만 확인하므로 롤을 회수해도 세션 수명(`ADMIN_SESSION_TTL_SECONDS`, 기본 3600초) 동안은 접근이 남습니다.
+
+게이트웨이는 `X-Forwarded-Proto: https`를 보내고, 컨테이너의 uvicorn은 `--proxy-headers --forwarded-allow-ips=*`로 그 값을 믿어 관리자 화면 링크를 https로 만듭니다. TUK World 이미지 업로드(앱 한도 5MB)를 위해 게이트웨이 `client_max_body_size`는 6m입니다.
