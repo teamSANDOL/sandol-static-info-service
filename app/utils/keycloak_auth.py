@@ -23,6 +23,13 @@ def _jwks_client() -> jwt.PyJWKClient:
     return jwt.PyJWKClient(url, cache_keys=True, lifespan=600, timeout=5)
 
 
+def _client_allowed(payload: dict[str, Any]) -> bool:
+    """토큰 azp 또는 aud가 KC_ALLOWED_CLIENTS에 있는지 확인합니다."""
+    aud = payload.get("aud")
+    claims = [payload.get("azp"), *(aud if isinstance(aud, list) else [aud])]
+    return any(c in Config.KC_ALLOWED_CLIENTS for c in claims if isinstance(c, str))
+
+
 def require_admin(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
 ) -> str:
@@ -34,10 +41,15 @@ def require_admin(
         HTTPException: 미설정(503), 토큰 없음·무효(401), 롤 없음(403).
     """
     if not Config.KC_SERVER_URL:
-        raise HTTPException(503, "admin_auth_not_configured")
+        raise HTTPException(
+            Config.HttpStatus.SERVICE_UNAVAILABLE,
+            "관리자 인증이 설정되지 않았습니다.",
+        )
     if credentials is None:
         raise HTTPException(
-            401, "missing_bearer_token", headers={"WWW-Authenticate": "Bearer"}
+            Config.HttpStatus.UNAUTHORIZED,
+            "Bearer 토큰이 필요합니다.",
+            headers={"WWW-Authenticate": "Bearer"},
         )
     token = credentials.credentials
     try:
@@ -51,15 +63,27 @@ def require_admin(
         )
     except jwt.PyJWKClientConnectionError as exc:
         logger.error("Keycloak JWKS 조회 실패: %s", exc)
-        raise HTTPException(503, "jwks_unavailable") from exc
+        raise HTTPException(
+            Config.HttpStatus.SERVICE_UNAVAILABLE,
+            "인증 서버 키를 조회할 수 없습니다.",
+        ) from exc
     except jwt.PyJWTError as exc:
         logger.info("관리자 토큰 검증 실패: %s", type(exc).__name__)
         raise HTTPException(
-            401, "invalid_token", headers={"WWW-Authenticate": "Bearer"}
+            Config.HttpStatus.UNAUTHORIZED,
+            "유효하지 않은 토큰입니다.",
+            headers={"WWW-Authenticate": "Bearer"},
         ) from exc
+
+    if Config.KC_ALLOWED_CLIENTS and not _client_allowed(payload):
+        raise HTTPException(
+            Config.HttpStatus.UNAUTHORIZED,
+            "허용되지 않은 클라이언트의 토큰입니다.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
     realm_access = payload.get("realm_access")
     roles = realm_access.get("roles") if isinstance(realm_access, dict) else None
     if not isinstance(roles, list) or Config.KC_ADMIN_ROLE not in roles:
-        raise HTTPException(403, "missing_admin_role")
+        raise HTTPException(Config.HttpStatus.FORBIDDEN, "관리자 권한이 필요합니다.")
     return str(payload["sub"])

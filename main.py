@@ -7,7 +7,7 @@ from fastapi import FastAPI
 import uvicorn
 
 from app.admin import mount_admin
-from app.models.tuk_world import init_db
+from app.database import init_db
 from app.routers import (
     bus_router,
     meal_router,

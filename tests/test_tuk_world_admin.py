@@ -14,7 +14,8 @@ from sqlalchemy import select
 from app.admin import auth as admin_auth
 from app.admin import mount_admin
 from app.config import Config
-from app.models.tuk_world import Restaurant, RestaurantImage, SessionLocal, init_db
+from app.database import SessionLocal, init_db
+from app.models.tuk_world import Restaurant, RestaurantImage
 from app.utils.tuk_world_images import image_path
 
 P = "/static-info/admin"
@@ -141,10 +142,11 @@ def test_bad_image_rejected(
     client: TestClient, data: bytes, name: str, mime: str
 ) -> None:
     rid = _create(client)
+    before = os.listdir(Config.TUK_WORLD_IMAGE_DIR)
     assert _upload(client, rid, data, name, mime).status_code == 400
     with SessionLocal() as db:
         assert db.scalars(select(RestaurantImage)).first() is None
-    assert os.listdir(Config.TUK_WORLD_IMAGE_DIR) == []
+    assert os.listdir(Config.TUK_WORLD_IMAGE_DIR) == before
 
 
 def test_audit_log(client: TestClient, caplog: pytest.LogCaptureFixture) -> None:

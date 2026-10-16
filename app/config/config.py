@@ -34,7 +34,6 @@ class Config:
     """FastAPI 설정 값을 관리하는 클래스"""
 
     DEBUG = os.getenv("DEBUG", "False").lower() == "true"
-    # API Key 원본은 저장하지 않고 SHA-256 hex 해시만 보관 (X-API-Key 인증용)
     SHUTTLE_URL: str = "https://ibook.tukorea.ac.kr/Viewer/bus01"
     WEEKLY_MENU_URL: str = "https://ibook.tukorea.ac.kr/Viewer/menu02"
 
@@ -63,6 +62,12 @@ class Config:
     KC_REALM: str = os.getenv("KC_REALM", "Sandori")
     KC_ADMIN_ROLE: str = os.getenv("KC_ADMIN_ROLE", "global_admin")
     KC_JWKS_URL: str = os.getenv("KC_JWKS_URL", "")
+    # 쉼표 구분 허용 클라이언트. 비어 있으면 azp/aud를 검사하지 않는다.
+    KC_ALLOWED_CLIENTS: list[str] = [
+        c.strip() for c in os.getenv("KC_ALLOWED_CLIENTS", "").split(",") if c.strip()
+    ]
+    # 이미지 URL 절대화용 공개 주소(예: https://sandori.kr). 비어 있으면 상대경로.
+    PUBLIC_BASE_URL: str = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
 
     # 관리자 화면(sqladmin, /static-info/admin). 아래 값이 하나라도 비면 마운트하지 않는다.
     ROOT_PATH: str = "/static-info"
@@ -100,10 +105,13 @@ class Config:
         NOT_FOUND = 404
         NOT_ACCEPTABLE = 406
         CONFLICT = 409
+        REQUEST_ENTITY_TOO_LARGE = 413
         UNSUPPORTED_MEDIA_TYPE = 415
+        UNPROCESSABLE_ENTITY = 422
         INTERNAL_SERVER_ERROR = 500
         NOT_IMPLEMENTED = 501
         BAD_GATEWAY = 502
+        SERVICE_UNAVAILABLE = 503
 
     class Accept:
         """Accept 헤더를 정의하는 클래스"""
