@@ -34,7 +34,6 @@ class Config:
     """FastAPI 설정 값을 관리하는 클래스"""
 
     DEBUG = os.getenv("DEBUG", "False").lower() == "true"
-    # API Key 원본은 저장하지 않고 SHA-256 hex 해시만 보관 (X-API-Key 인증용)
     SHUTTLE_URL: str = "https://ibook.tukorea.ac.kr/Viewer/bus01"
     WEEKLY_MENU_URL: str = "https://ibook.tukorea.ac.kr/Viewer/menu02"
 
@@ -45,6 +44,31 @@ class Config:
     DATA_DIR: str = os.getenv("DATA_DIR", os.path.join(SERVICE_DIR, "data"))
     SHUTTLE_TIMETABLE_PATH: str = os.path.join(DATA_DIR, "shuttle_timetable.json")
     SHUTTLE_PDF_DIR: str = os.path.join(DATA_DIR, "shuttle_pdf")
+    # TUK World(총학생회 제휴 식당): SQLite + 이미지 디렉터리 (compose에서 볼륨 마운트)
+    TUK_WORLD_DIR: str = os.getenv("TUK_WORLD_DIR", os.path.join(DATA_DIR, "tuk_world"))
+    TUK_WORLD_DB_PATH: str = os.path.join(TUK_WORLD_DIR, "tuk_world.db")
+    TUK_WORLD_IMAGE_DIR: str = os.path.join(TUK_WORLD_DIR, "images")
+    TUK_WORLD_MAX_IMAGE_BYTES: int = int(
+        os.getenv("TUK_WORLD_MAX_IMAGE_BYTES", str(5 * 1024 * 1024))
+    )
+
+    # 쓰기 API 보호용 Keycloak 설정. KC_SERVER_URL이 비어 있으면 쓰기는 모두 거부된다.
+    # KC_SERVER_URL은 토큰 iss와 같은 공개 주소, KC_JWKS_URL은 내부망 주소로 바꿀 수 있다.
+    KC_SERVER_URL: str = (
+        os.getenv("KC_SERVER_URL", "").rstrip("/") + "/"
+        if os.getenv("KC_SERVER_URL")
+        else ""
+    )
+    KC_REALM: str = os.getenv("KC_REALM", "Sandori")
+    KC_ADMIN_ROLE: str = os.getenv("KC_ADMIN_ROLE", "global_admin")
+    KC_JWKS_URL: str = os.getenv("KC_JWKS_URL", "")
+    # 쉼표 구분 허용 클라이언트. 비어 있으면 azp/aud를 검사하지 않는다.
+    KC_ALLOWED_CLIENTS: list[str] = [
+        c.strip() for c in os.getenv("KC_ALLOWED_CLIENTS", "").split(",") if c.strip()
+    ]
+    # 이미지 URL 절대화용 공개 주소(예: https://sandori.kr). 비어 있으면 상대경로.
+    PUBLIC_BASE_URL: str = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
+
     school_info_path: str = os.path.join(
         os.path.abspath(os.path.join(CONFIG_DIR, "school_info.json"))
     )
@@ -62,10 +86,13 @@ class Config:
         NOT_FOUND = 404
         NOT_ACCEPTABLE = 406
         CONFLICT = 409
+        REQUEST_ENTITY_TOO_LARGE = 413
         UNSUPPORTED_MEDIA_TYPE = 415
+        UNPROCESSABLE_ENTITY = 422
         INTERNAL_SERVER_ERROR = 500
         NOT_IMPLEMENTED = 501
         BAD_GATEWAY = 502
+        SERVICE_UNAVAILABLE = 503
 
     class Accept:
         """Accept 헤더를 정의하는 클래스"""

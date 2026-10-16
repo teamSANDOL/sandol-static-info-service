@@ -6,7 +6,13 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 import uvicorn
 
-from app.routers import bus_router, meal_router, organization_router
+from app.database import init_db
+from app.routers import (
+    bus_router,
+    meal_router,
+    organization_router,
+    tuk_world_router,
+)
 from app.config.config import logger
 from app.jobs.scheduler import start_scheduler, stop_scheduler
 from app.utils.shuttle_timetable import sync_shuttle_timetables
@@ -16,6 +22,7 @@ from app.utils.shuttle_timetable import sync_shuttle_timetables
 async def lifespan(app: FastAPI):
     """FastAPI의 lifespan 이벤트 핸들러"""
     logger.info("🚀 서비스 시작:")
+    init_db()
     start_scheduler()
     # 배포 직후 수동 refresh 없이도 채워지도록 기동 시 1회 동기화 (참조를 잡아둬야 GC되지 않음)
     startup_sync = asyncio.create_task(sync_shuttle_timetables())
@@ -34,6 +41,7 @@ app = FastAPI(lifespan=lifespan, root_path="/static-info")
 app.include_router(bus_router)
 app.include_router(meal_router)
 app.include_router(organization_router)
+app.include_router(tuk_world_router)
 
 
 @app.get("/")

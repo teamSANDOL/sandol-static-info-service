@@ -9,11 +9,12 @@ import asyncio
 import datetime
 from zoneinfo import ZoneInfo
 
-from fastapi import HTTPException, Query
+from fastapi import Depends, HTTPException, Query
 
 from app.config import Config
 from app.routers.ibook_images import create_ibook_image_router
 from app.schemas.shuttle import DayType, ParsedTimetable
+from app.utils.keycloak_auth import require_admin
 from app.utils.shuttle_timetable import (
     delete_timetable,
     load_store,
@@ -115,6 +116,7 @@ async def get_shuttle_timetable(
 
 @router.post(
     "/timetable/refresh",
+    dependencies=[Depends(require_admin)],
     status_code=Config.HttpStatus.ACCEPTED,
     responses={
         Config.HttpStatus.ACCEPTED: {
@@ -135,6 +137,7 @@ async def refresh_shuttle_timetable(force: bool = False):
 
 @router.put(
     "/timetable/{place}",
+    dependencies=[Depends(require_admin)],
     responses={
         Config.HttpStatus.OK: {
             "description": "사용자가 입력한 시간표를 저장했습니다. 이후 cron/refresh는 이 place를 덮어쓰지 않습니다."
@@ -151,6 +154,7 @@ async def put_shuttle_timetable(place: str, body: ParsedTimetable):
 
 @router.delete(
     "/timetable/{place}",
+    dependencies=[Depends(require_admin)],
     status_code=Config.HttpStatus.NO_CONTENT,
     responses={
         Config.HttpStatus.NO_CONTENT: {
