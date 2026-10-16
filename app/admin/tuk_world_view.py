@@ -16,7 +16,8 @@ from wtforms.validators import NumberRange, Optional, Regexp
 
 from app.admin.auth import log_admin_action
 from app.config import Config
-from app.models.tuk_world import Restaurant, RestaurantImage, SessionLocal
+from app.database import SessionLocal
+from app.models.tuk_world import Restaurant, RestaurantImage
 from app.utils.tuk_world_images import (
     ImageValidationError,
     remove_image,

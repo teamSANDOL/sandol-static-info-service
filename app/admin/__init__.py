@@ -13,7 +13,7 @@ from sqladmin import Admin
 
 from app.admin.auth import KeycloakAdminAuth, admin_configured, router
 from app.config import Config, logger
-from app.models.tuk_world import engine
+from app.database import engine
 
 TEMPLATES_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "templates")
 
