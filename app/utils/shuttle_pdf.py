@@ -7,7 +7,10 @@ iBook이 제공하는 원본 PDF(`/web/RawFileList`)를 좌표 기반으로 읽�
   (A) 『정왕역 ↔ 본교』 시(hour)-분(minute) 격자표.
       분 셀에는 세로 괘선이 없어 extract_tables로는 읽히지 않습니다.
       '시간' 머리글 좌우의 세로 괘선으로 시 열을 잡고, 좌측=하교 우측=등교로 가릅니다.
+      '※ N시 이후 … 도착버스 탑승' + '~ MM분 (막차)'는 kind=arrival_board 구간 1건입니다.
   (B) 『제2캠퍼스 ↔ 본교 ↔ 정왕역』 표. HH:MM 리터럴이라 열 머리글에서 방향만 정하면 됩니다.
+      운행일은 머리글 바로 위 병합 셀('평 일' | '토요일 (일학습병행학부)')로 열마다 정하고,
+      셀 안 괄호('(오이도역 도착)', '(정왕역출발 8:55, 9시 )')는 그 열 운행편으로 세지 않습니다.
   (C) '<장소> 출발' 열 머리글 + 'A ↔ B' 그룹 머리글을 쓰는 2캠 전용 문서.
 
 2024년 이후 iBook 등록분 69건 전수 검증 기준으로 원문의 모든 출발 시각을 추출합니다.
@@ -17,13 +20,16 @@ iBook이 제공하는 원본 PDF(`/web/RawFileList`)를 좌표 기반으로 읽�
 
 import io
 import re
+from itertools import pairwise
 
 import pdfplumber
 
 from app.config.config import logger
 from app.config.shuttle_routes import SHUTTLE_DIRECTIONS
 
+LINE_EPS = 1.5  # 이보다 x(또는 y) 차가 작은 선을 세로(가로) 괘선으로 봅니다.
 TIME = re.compile(r"(\d{1,2}):(\d{2})")
+VALID_TIME = re.compile(r"(?<!\d)([01]?\d|2[0-3]):([0-5]\d)(?!\d)")
 INT = re.compile(r"^\d{1,2}$")
 # '9.1 ~ 12.22', '6/23~8/31' 같은 운행 기간. 시각(HH:MM)과 구분자가 달라 섞이지 않습니다.
 PERIOD = re.compile(r"(\d{1,2})[./](\d{1,2})\s*~\s*(\d{1,2})[./](\d{1,2})")
@@ -138,6 +144,7 @@ def _canon_direction(text):
 def _trip(direction, day_type, departure_time, end=None, note=None):
     """ParsedTrip 과 같은 모양의 dict. 운행 기간은 페이지 단위로 나중에 채웁니다."""
     return {
+        "kind": "frequent" if end else "fixed",
         "direction": direction,
         "day_type": day_type,
         "day_note": None,
@@ -186,6 +193,8 @@ def _parse_grid(page, words, day_type, out):
     hs = sorted(set([h for h in _hlines(page) if top0 - 2 <= h <= bottom] + [bottom]))
     words = [w for w in words if top0 < w["top"] < bottom]
     cur_hour = None
+    side_text = ["", ""]
+    lasts: list[dict | None] = [None, None]
     for a, b in zip(hs, hs[1:]):
         row = [w for w in words if a - 1 <= w["top"] < b - 1]
         if not row:
@@ -202,6 +211,7 @@ def _parse_grid(page, words, day_type, out):
                 w for w in row if (_cx(w) < left_x if side == 0 else _cx(w) > right_x)
             ]
             joined = " ".join(w["text"] for w in cells)
+            side_text[side] += " " + joined
             label = (
                 " ".join(w["text"] for w in cells if not INT.match(w["text"])).strip()
                 or None
@@ -213,7 +223,8 @@ def _parse_grid(page, words, day_type, out):
                         day_type,
                         _hhmm(rng.group(1), rng.group(2)),
                         end=_hhmm(rng.group(3), rng.group(4)),
-                        note=label or "수시운행",
+                        note=re.sub(r"\(?[\d:\s~]+\)?", " ", label or "").strip()
+                        or "수시운행",
                     )
                 )
             # 범위 처리 후에도 같은 셀을 계속 읽어야
@@ -224,12 +235,36 @@ def _parse_grid(page, words, day_type, out):
                 out.append(_trip(direction, day_type, _hhmm(hh, mm), note=label))
             last = re.search(r"~\s*(\d{1,2})분", joined)
             if last:
-                out.append(
-                    _trip(direction, day_type, _hhmm(cur_hour, last.group(1)), note="막차")
+                lasts[side] = _trip(
+                    direction, day_type, _hhmm(cur_hour, last.group(1)), note="막차"
                 )
+                out.append(lasts[side])
             for w in cells:
                 if INT.match(w["text"]) and int(w["text"]) <= 59:
                     out.append(_trip(direction, day_type, _hhmm(cur_hour, w["text"])))
+    _arrival_board(side_text[0], lasts[0], DIR_OUT, day_type, out)
+    _arrival_board(side_text[1], lasts[1], DIR_IN, day_type, out)
+
+
+def _arrival_board(text, last, direction, day_type, out):
+    """'※ 17시 이후 시간은 ★ 도착버스 탑승' + '~ 17분 (막차)' → 도착버스 구간 1건.
+
+    정시 출발이 아니라 들어오는 버스를 타는 구간이라 막차 1편으로 두면 그 앞 시간대가
+    통째로 사라집니다. 시작 시각('N시 이후')과 막차가 둘 다 있을 때만 바꿉니다.
+    """
+    start = re.search(r"(\d{1,2})시\s*이후", text)
+    if "도착버스" not in text.replace(" ", "") or not start or last is None:
+        return
+    out.remove(last)
+    t = _trip(
+        direction,
+        day_type,
+        _hhmm(start.group(1), 0),
+        end=last["departure_time"],
+        note="도착버스 탑승",
+    )
+    t["kind"] = "arrival_board"
+    out.append(t)
 
 
 # ---------------- (B)/(C) 2캠 표 ----------------
@@ -329,14 +364,32 @@ def _parse_cam(page, words, out, grid_bottom, page_day):
     )
     bounds = [0.0] + vs + [float(page.width)]
 
+    cols = _cam_cols(hdr, bounds, float(page.width))
+    if cols:
+        days = _cam_days(page, region, hdr_top, cols, page_day)
+        body = [w for w in region if w["top"] > hdr_top + 3]
+        _cam_body(body, cols, days, out)
+
+
+def _cam_cols(hdr, bounds, width):
+    """2캠 표 머리글 → [(x0, x1, 방향)] 열 목록."""
     # 괘선이 머리글 한가운데('본교' | '출발⇒제2캠')를 가르는 문서가 있어,
     # 머리글을 단어 간격으로 먼저 묶은 뒤 열에 배정합니다.
-    hdr_groups = sorted(
-        (sum(_cx(w) for w in g) / len(g), "".join(w["text"] for w in g))
-        for g in _groups(hdr)
-    )
+    # 반대로 머리글 사이가 좁아 여러 열이 한 묶음이 되면(26년 2학기) 방향이 깨지므로,
+    # 방향으로 확정되지 않는 묶음만 괘선 기준으로 다시 나눕니다.
+    hdr_groups = []
+    for g in _groups(hdr):
+        parts = [g]
+        if _canon_direction("".join(w["text"] for w in g)) not in SHUTTLE_DIRECTIONS:
+            parts = [[w for w in g if a <= _cx(w) < b] for a, b in pairwise(bounds)]
+        hdr_groups += [
+            (sum(_cx(w) for w in p) / len(p), "".join(w["text"] for w in p))
+            for p in parts
+            if p
+        ]
+    hdr_groups.sort()
     cols = []
-    for x0, x1 in zip(bounds, bounds[1:]):
+    for x0, x1 in pairwise(bounds):
         inside = sorted(g for g in hdr_groups if x0 <= g[0] <= x1)
         # 한 밴드에 머리글이 여럿이면 괘선이 빠진 것이므로 각각 별도 열로 쪼갭니다.
         for i, (c, name) in enumerate(inside):
@@ -346,30 +399,120 @@ def _parse_cam(page, words, out, grid_bottom, page_day):
     if not cols and hdr_groups:
         for i, (c, name) in enumerate(hdr_groups):
             lo = 0.0 if i == 0 else (hdr_groups[i - 1][0] + c) / 2
-            hi = (
-                float(page.width)
-                if i == len(hdr_groups) - 1
-                else (hdr_groups[i + 1][0] + c) / 2
-            )
+            hi = width if i == len(hdr_groups) - 1 else (hdr_groups[i + 1][0] + c) / 2
             cols.append((lo, hi, _cam_direction(name)))
-    if not cols:
-        return
+    return cols
 
-    day_rows = [w for w in region if w["top"] < hdr_top - 3]
-    for w in region:
-        if w["top"] < hdr_top:
-            continue
-        for hh, mm in TIME.findall(w["text"]):
-            if int(hh) > 23 or int(mm) > 59:
+
+def _col_of(cols, w):
+    """단어가 속한 열 번호. 어느 열에도 안 들면 중심이 가장 가까운 열."""
+    hit = next((i for i, c in enumerate(cols) if c[0] <= _cx(w) <= c[1]), None)
+    if hit is not None:
+        return hit
+    return min(
+        range(len(cols)), key=lambda i: abs(_cx(w) - (cols[i][0] + cols[i][1]) / 2)
+    )
+
+
+def _cam_body(body, cols, days, out):
+    """머리글 아래 셀을 줄 단위로 읽습니다. 괄호 안 시각은 운행편으로 세지 않습니다."""
+
+    def emit(i, direction, hh, mm):
+        t = _trip(direction, days[i][0], _hhmm(hh, mm))
+        t["day_note"] = days[i][1]
+        out.append(t)
+        return t
+
+    for row in _rows(body):
+        depth, paren, last = 0, [], {}
+        for w in row:
+            # '★ 정왕역 출발은 꽃집앞 출발' 같은 각주는 그 줄 끝까지 시각이 아닙니다.
+            if w["text"].startswith(("★", "※")):
+                break
+            if depth or w["text"].startswith("("):
+                depth += w["text"].count("(") - w["text"].count(")")
+                paren.append(w)
+                if depth <= 0:
+                    _cam_paren(paren, _col_of(cols, paren[0]), cols, last, emit)
+                    depth, paren = 0, []
                 continue
-            col = next((c for c in cols if c[0] <= _cx(w) <= c[1]), None) or min(
-                cols, key=lambda c: abs(_cx(w) - (c[0] + c[1]) / 2)
-            )
-            day = _norm_day(
-                "".join(d["text"] for d in day_rows if col[0] <= _cx(d) <= col[1]),
-                page_day,
-            )
-            out.append(_trip(col[2], day, _hhmm(hh, mm)))
+            i = _col_of(cols, w)
+            for hh, mm in _times(w["text"]):
+                last[i] = emit(i, cols[i][2], hh, mm)
+
+
+def _times(text):
+    """텍스트 속 유효한 HH:MM 목록(시 0~23, 분 0~59)."""
+    return VALID_TIME.findall(text)
+
+
+def _rows(words, tol=4):
+    """단어를 줄(top 근접) 단위로 묶어 x 순으로 정렬합니다."""
+    rows: list[list[dict]] = []
+    for w in sorted(words, key=lambda w: (w["top"], w["x0"])):
+        if rows and w["top"] - rows[-1][0]["top"] < tol:
+            rows[-1].append(w)
+        else:
+            rows.append([w])
+    return [sorted(r, key=lambda w: w["x0"]) for r in rows]
+
+
+def _cam_paren(paren, i, cols, last, emit):
+    """2캠 표 셀 안 괄호. 시각이 섞여 있어도 그 열의 운행편으로 세지 않습니다.
+
+    - '(오이도역 도착)'처럼 시각이 없으면 같은 줄·같은 열 직전 운행편의 비고.
+    - '(정왕역출발 8:55, 9시 )'는 그 열 방향의 출발지 앞에 '정왕역'을 붙인 방향의
+      운행편입니다(본교 ⇒ 2캠 열이면 정왕역 → 본교 → 제2캠퍼스). 원문 각주
+      '★ (정왕역출발 8:55, 9시 ) → 본교 운동장옆(서문) 건너편 … → 2캠퍼스'와 같습니다.
+    """
+    text = " ".join(w["text"] for w in paren)
+    times = _times(text) + [(h, "00") for h in re.findall(r"(\d{1,2})시(?!\s*이후)", text)]
+    if not times:
+        note = text.strip("() ")
+        if i in last and note:
+            last[i]["note"] = note
+        return
+    origin = re.search(r"\(\s*([^\s()]+?)\s*출발", text)
+    direction = origin and _canon_direction(f"{origin.group(1)}⇒{cols[i][2]}")
+    if direction in SHUTTLE_DIRECTIONS:
+        for hh, mm in sorted(times, key=lambda t: (int(t[0]), int(t[1]))):
+            emit(i, direction, hh, mm)
+
+
+def _vlines_at(page, y):
+    """y 높이를 가로지르는 세로 괘선의 x 목록."""
+    return sorted(
+        {
+            round(ln["x0"], 1)
+            for ln in page.lines
+            if abs(ln["x0"] - ln["x1"]) < LINE_EPS and ln["top"] <= y <= ln["bottom"]
+        }
+    )
+
+
+def _cam_days(page, region, hdr_top, cols, page_day):
+    """열마다 (운행일, 운행일 비고). 머리글 바로 위 칸(병합 셀)을 괘선으로 나눠 읽습니다.
+
+    '평 일'처럼 글자가 띄어져 있거나 '토요일 (일학습병행학부)'가 두 열에 걸쳐 있어,
+    열 x범위만으로 고르면 표 제목 '(평일, 토요일)'이나 엉뚱한 칸을 읽습니다.
+    칸 위·아래 가로 괘선이 없으면 운행일은 페이지 기본값입니다.
+    """
+    above = [h for h in _hlines(page) if h < hdr_top - 1]
+    h1 = above[-1] if above else None
+    h0 = max((h for h in above if h1 is not None and h < h1 - 1), default=None)
+    if h0 is None or h1 is None:
+        return [(page_day, None)] * len(cols)
+    cuts = _vlines_at(page, (h0 + h1) / 2)
+    cells = list(pairwise([0.0, *cuts, float(page.width)]))
+    row = sorted((w for w in region if h0 - 1 <= w["top"] < h1), key=lambda w: w["x0"])
+    out = []
+    for lo, hi, _ in cols:
+        c = (lo + hi) / 2
+        a, b = next(((a, b) for a, b in cells if a <= c <= b), (c, c))
+        text = "".join(w["text"] for w in row if a <= _cx(w) <= b)
+        note = re.search(r"\(([^)]*)\)", text)
+        out.append((_norm_day(text, page_day), note.group(1).strip() if note else None))
+    return out
 
 
 def parse_shuttle_pdf(data: bytes) -> tuple[str | None, list[dict]]:

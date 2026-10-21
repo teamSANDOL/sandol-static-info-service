@@ -2,8 +2,9 @@
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
+TripKind = Literal["fixed", "frequent", "arrival_board"]
 DayType = Literal["평일", "토요일", "일요일", "주말", "공휴일"]
 
 # app/config/shuttle_routes.py 의 SHUTTLE_DIRECTIONS 키와 동일해야 함 (tests에서 검증)
@@ -60,6 +61,30 @@ class ParsedTrip(BaseModel):
     note: str | None = Field(
         description="이 출발 건에만 해당하는 비고. 예: '막차', '수시운행', '오이도역 도착'. 운행기간 같은 표 전체 공통 정보는 넣지 말 것. 없으면 null"
     )
+    kind: TripKind = Field(
+        default="fixed",
+        description=(
+            "구간 종류. fixed=정시 출발 1건, frequent=수시운행 구간(시작~종료), "
+            "arrival_board=정시 출발 대신 도착하는 버스에 탑승하는 구간(종료=막차). "
+            "생략하면 종료 시각이 있으면 frequent, 없으면 fixed"
+        ),
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _default_kind(cls, data: object) -> object:
+        """kind가 없던 기존 입력(저장본·PUT 본문)도 그대로 받도록 기본값을 채웁니다."""
+        if isinstance(data, dict) and not data.get("kind"):
+            end = data.get("departure_time_end")
+            return {**data, "kind": "frequent" if end else "fixed"}
+        return data
+
+    @model_validator(mode="after")
+    def _range_needs_end(self) -> "ParsedTrip":
+        """수시운행·도착버스 구간은 종료 시각(막차)이 있어야 앱이 구간으로 그립니다."""
+        if self.kind != "fixed" and not self.departure_time_end:
+            raise ValueError(f"kind={self.kind}에는 departure_time_end가 필요합니다.")
+        return self
 
 
 class ParsedTimetable(BaseModel):

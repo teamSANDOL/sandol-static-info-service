@@ -16,7 +16,7 @@ from starlette.requests import Request
 from starlette.responses import RedirectResponse, Response
 
 from app.admin.auth import admin_sub, csrf_token, log_admin_action, verify_csrf
-from app.schemas.shuttle import DayType, Direction, ParsedTrip
+from app.schemas.shuttle import DayType, Direction, ParsedTrip, TripKind
 from app.utils.shuttle_timetable import (
     delete_timetable,
     load_store,
@@ -37,6 +37,7 @@ _FIELDS = (
     "period_note",
     "boarding_place",
     "note",
+    "kind",
 )
 _BLANK_ROWS = 5
 
@@ -76,7 +77,7 @@ def parse_trips(rows: list[dict]) -> list[ParsedTrip]:
             trips.append(ParsedTrip(**row))
         except ValidationError as exc:
             raise ValueError(
-                f"{n}번째 행: 방향 또는 운행일 값이 올바르지 않습니다."
+                f"{n}번째 행: 방향·운행일·종류 값이 올바르지 않습니다(수시운행·도착버스는 종료 시각 필요)."
             ) from exc
     return trips
 
@@ -130,6 +131,7 @@ class ShuttleAdminView(BaseView):
             blanks=min(blanks, 100),
             directions=get_args(Direction),
             day_types=get_args(DayType),
+            kinds=get_args(TripKind),
             error=error,
         )
 

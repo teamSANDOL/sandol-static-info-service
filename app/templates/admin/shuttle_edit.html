@@ -7,6 +7,10 @@
   <td><select class="form-select form-select-sm" name="t-{{ i }}-day_type">
     {% for v in day_types %}<option value="{{ v }}" {% if t.day_type == v %}selected{% endif %}>{{ v }}</option>{% endfor %}
   </select></td>
+  <td><select class="form-select form-select-sm" name="t-{{ i }}-kind">
+    <option value="">자동</option>
+    {% for v in kinds %}<option value="{{ v }}" {% if t.kind == v %}selected{% endif %}>{{ v }}</option>{% endfor %}
+  </select></td>
   <td><input class="form-control form-control-sm" name="t-{{ i }}-departure_time" value="{{ t.departure_time or '' }}" placeholder="08:40" size="5"></td>
   <td><input class="form-control form-control-sm" name="t-{{ i }}-departure_time_end" value="{{ t.departure_time_end or '' }}" placeholder="10:00" size="5"></td>
   <td><input class="form-control form-control-sm" name="t-{{ i }}-valid_from" value="{{ t.valid_from or '' }}" placeholder="09-01" size="5"></td>
@@ -41,12 +45,12 @@
         <label class="form-label">제목</label>
         <input class="form-control" name="title" value="{{ doc_title or '' }}">
       </div>
-      <p class="text-muted">출발 시각이 빈 행은 저장하지 않습니다. 시각은 HH:MM, 운행 기간은 MM-DD(비우면 상시)입니다.
+      <p class="text-muted">출발 시각이 빈 행은 저장하지 않습니다. 시각은 HH:MM, 운행 기간은 MM-DD(비우면 상시)입니다. 종류를 '자동'으로 두면 종료 시각이 있으면 수시운행(frequent), 없으면 정시(fixed)입니다. arrival_board는 정시 출발 대신 도착하는 버스를 타는 구간(종료=막차)입니다.
         행이 부족하면 <a href="?{% if is_new %}new=1{% else %}place={{ place | urlencode }}{% endif %}&extra=30">빈 행 30개로 다시 열기</a>(입력 중인 내용은 저장되지 않습니다).</p>
     </div>
     <div class="table-responsive">
       <table class="table table-sm card-table">
-        <thead><tr><th>방향</th><th>운행일</th><th>출발</th><th>종료(수시)</th><th>시작일</th><th>종료일</th><th>운행일 비고</th><th>기간 비고</th><th>탑승 장소</th><th>비고</th><th>삭제</th></tr></thead>
+        <thead><tr><th>방향</th><th>운행일</th><th>종류</th><th>출발</th><th>종료(수시)</th><th>시작일</th><th>종료일</th><th>운행일 비고</th><th>기간 비고</th><th>탑승 장소</th><th>비고</th><th>삭제</th></tr></thead>
         <tbody>
         {% for t in trips %}{{ row(loop.index0, t) }}{% endfor %}
         {% for n in range(blanks) %}{{ row(trips | length + n, {}) }}{% endfor %}
