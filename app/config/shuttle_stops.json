@@ -1,5 +1,5 @@
 {
-  "source": "좌표: sandol_FE nearest_shuttle_origin.dart(본교·정왕역). 탑승 안내: 26년 2학기 셔틀버스 시간표 PDF 각주·탑승 장소 안내. id는 코드에서 고정이므로 바꾸지 말 것(이름·좌표·안내만 수정).",
+  "source": "좌표: sandol_FE nearest_shuttle_origin.dart(본교·정왕역), 사용자 제공 Plus Code(본교 8PQJ+VWR, 제2캠퍼스 8MJR+77). 탑승 안내: 26년 2학기 셔틀버스 시간표 PDF 각주·탑승 장소 안내. id는 코드에서 고정이므로 바꾸지 말 것(이름·좌표·안내만 수정).",
   "stops": [
     {
       "id": "main_campus",
@@ -18,8 +18,8 @@
     {
       "id": "campus2",
       "name": "제2캠퍼스",
-      "lat": null,
-      "lng": null,
+      "lat": 37.3306875,
+      "lng": 126.6906875,
       "boarding_note": "정왕역·본교 방향 동일 승차장"
     }
   ]
