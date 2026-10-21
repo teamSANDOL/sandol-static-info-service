@@ -11,15 +11,16 @@ import datetime
 from typing import Annotated
 from zoneinfo import ZoneInfo
 
-from fastapi import Depends, HTTPException, Query
+from fastapi import Depends, HTTPException
 
 from app.config import Config, logger
 from app.routers.ibook_images import create_ibook_image_router
-from app.schemas.shuttle import DayType, ParsedTimetable
+from app.schemas.shuttle import ParsedTimetable
 from app.utils.shuttle_timetable import (
+    build_timetable,
     delete_timetable,
     load_store,
-    query_trips,
+    pick_document,
     save_user_timetable,
     sync_shuttle_timetables,
 )
@@ -44,90 +45,90 @@ def _audit(sub: str, action: str, target: str) -> None:
 router = create_ibook_image_router("/bus", Config.SHUTTLE_URL, "버스")
 
 
+_EXAMPLE = {
+    "date": "2026-10-22",
+    "day_type": "weekday",
+    "holiday_name": None,
+    "version": "3f1c0a9b8d7e6f50",
+    "valid_from": "2026-09-01",
+    "valid_to": "2026-12-22",
+    "source": {
+        "title": "26년 셔틀버스 시간표 (2학기) 9.1 ~ 12.22",
+        "pdf_url": "https://contents.tukorea.ac.kr/...",
+        "parsed_at": "2026-10-21T00:00:00+00:00",
+        "origin": "pdf",
+        "needs_review": False,
+    },
+    "stops": [
+        {
+            "id": "jeongwang",
+            "name": "정왕역",
+            "lat": 37.3512712,
+            "lng": 126.7411157,
+            "boarding_note": "정왕역 출발은 꽃집 앞",
+        }
+    ],
+    "routes": [
+        {
+            "id": "main",
+            "name": "정왕역 ↔ 본교",
+            "directions": [
+                {
+                    "id": "main_in",
+                    "from": "jeongwang",
+                    "to": "main_campus",
+                    "via": [],
+                    "segments": [
+                        {
+                            "type": "frequent",
+                            "start": "08:40",
+                            "end": "10:00",
+                            "note": "수시운행",
+                        },
+                        {"type": "fixed", "time": "10:00", "note": None},
+                        {
+                            "type": "arrival_board",
+                            "start": "17:00",
+                            "end": "22:17",
+                            "note": "도착버스 탑승",
+                        },
+                    ],
+                }
+            ],
+        }
+    ],
+    "notes": ["소요시간 10분, 퇴근(혼잡) 시간대는 20~30분 소요 예상"],
+}
+
+
 @router.get(
     "/timetable",
     responses={
         Config.HttpStatus.OK: {
             "description": (
-                "iBook 원본 PDF에서 파싱한 셔틀버스 시간표. "
-                "route(부분 일치)/day_type/origin/destination"
-                "(정왕역·본교·제2캠퍼스, 경유지 포함) 쿼리로 필터. "
-                "기본 동작은 오늘(KST) 기준 유효 기간(valid_from~valid_to) 안에 있는 trip만 반환하며, "
-                "date로 다른 날짜를 지정하거나 all=true로 기간 필터 없이 전체를 볼 수 있습니다. "
-                "방학 등 기간이 겹치는 통합표와 개별표의 중복은 자동 제거됩니다."
+                "date(기본 오늘, KST) 하루치 셔틀 시간표. day_type은 공휴일 정적 파일로 "
+                "확정하고, 방향 6개(main_out·main_in·campus2_out·campus2_in·"
+                "campus2_from_station·campus2_to_station)를 운행이 없어도 모두 담습니다. "
+                "segments는 fixed(정시 1편)·frequent(수시운행 구간)·"
+                "arrival_board(도착버스 탑승 구간, end=막차)이며 시작 시각 오름차순입니다."
             ),
-            "content": {
-                Config.Accept.JSON: {
-                    "example": {
-                        "sources": [
-                            {
-                                "place": "26년 셔틀버스 시간표 (2학기) 9.1 ~ 12.22",
-                                "title": "◈ 2학기 셔틀버스 시간표 ◈",
-                                "pdf_url": "https://contents.tukorea.ac.kr/...",
-                                "parsed_at": "2026-09-07T00:00:00+00:00",
-                                "source": "pdf",
-                            }
-                        ],
-                        "trips": [
-                            {
-                                "place": "26년 셔틀버스 시간표 (2학기) 9.1 ~ 12.22",
-                                "route": "정왕역 ↔ 본교",
-                                "direction": "정왕역 → 본교",
-                                "origin": "정왕역",
-                                "destination": "본교",
-                                "via": [],
-                                "day_type": "평일",
-                                "day_note": None,
-                                "departure_time": "22:17",
-                                "departure_time_end": None,
-                                "valid_from": "09-01",
-                                "valid_to": "12-22",
-                                "period_note": None,
-                                "boarding_place": None,
-                                "note": "막차",
-                            }
-                        ],
-                    }
-                }
-            },
+            "content": {Config.Accept.JSON: {"example": _EXAMPLE}},
         },
-        Config.HttpStatus.NOT_FOUND: {"description": "파싱된 시간표가 아직 없습니다."},
+        Config.HttpStatus.SERVICE_UNAVAILABLE: {
+            "description": "저장된 시간표가 아예 없습니다(timetable_unavailable)."
+        },
     },
 )
-async def get_shuttle_timetable(
-    route: str | None = None,
-    day_type: DayType | None = None,
-    origin: str | None = None,
-    destination: str | None = None,
-    date: datetime.date | None = None,
-    include_all: bool = Query(False, alias="all"),
-):
-    """저장된 셔틀버스 시간표를 반환합니다. route는 부분 일치, origin/destination은 경유지 포함 일치.
-
-    place는 출처 문서 이름일 뿐이며 한 PDF에 여러 노선이 있으므로 노선 필터는 route로 합니다.
-
-    기본은 오늘(KST) 기준 운행 기간(valid_from/valid_to)에 해당하는 trip만 반환합니다.
-    date 쿼리로 다른 날짜를 기준으로 조회하거나, all=true로 기간 필터 없이 전체를 조회할 수 있습니다.
-    """
+async def get_shuttle_timetable(date: datetime.date | None = None):
+    """조회일 하루치 셔틀 시간표를 모바일이 해석 없이 그릴 수 있는 형태로 반환합니다."""
     store = load_store()
     if not store:
         raise HTTPException(
-            status_code=Config.HttpStatus.NOT_FOUND,
-            detail="파싱된 시간표가 아직 없습니다.",
+            status_code=Config.HttpStatus.SERVICE_UNAVAILABLE,
+            detail="timetable_unavailable",
         )
     query_date = date or datetime.datetime.now(KST).date()
-    return {
-        "sources": [
-            {
-                k: d.get(k)
-                for k in ("place", "title", "pdf_url", "parsed_at", "source", "updated_at")
-            }
-            for d in store.values()
-        ],
-        "trips": query_trips(
-            store, route, day_type, origin, destination, query_date, include_all=include_all
-        ),
-    }
+    return build_timetable(pick_document(store, query_date), query_date)
 
 
 @router.post(
@@ -168,7 +169,9 @@ async def put_shuttle_timetable(place: str, body: ParsedTimetable, sub: Admin):
 
     저장 문서는 source="user"로 표시되어 cron/refresh(force 없이는)가 다시 파싱하지 않습니다.
     """
-    doc = await save_user_timetable(place, body.trips, body.title, updated_by=sub)
+    doc = await save_user_timetable(
+        place, body.trips, body.title, updated_by=sub, notes=body.notes
+    )
     _audit(sub, "shuttle_put", place)
     return doc
 

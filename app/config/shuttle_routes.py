@@ -46,3 +46,16 @@ SHUTTLE_DIRECTIONS: dict[str, dict] = {
         "destination": "정왕역",
     },
 }
+
+# 모바일 응답(GET /bus/timetable)용 고정 id. 앱이 이 값으로 화면을 고르므로 바꾸지 않습니다.
+STOP_IDS = {"본교": "main_campus", "정왕역": "jeongwang", "제2캠퍼스": "campus2"}
+ROUTE_IDS = {ROUTE_MAIN: "main", ROUTE_SECOND: "campus2"}
+# 응답에 나오는 순서이기도 합니다.
+DIRECTION_IDS = {
+    "본교 → 정왕역": "main_out",
+    "정왕역 → 본교": "main_in",
+    "본교 → 제2캠퍼스": "campus2_out",
+    "제2캠퍼스 → 본교": "campus2_in",
+    "정왕역 → 본교 → 제2캠퍼스": "campus2_from_station",
+    "제2캠퍼스 → 본교 → 정왕역": "campus2_to_station",
+}

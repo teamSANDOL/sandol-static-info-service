@@ -14,7 +14,11 @@ PDF = Path(__file__).parent / "fixtures" / "shuttle_2026_2nd.pdf"
 
 
 def _by_direction():
-    title, trips = parse_shuttle_pdf(PDF.read_bytes())
+    title, trips, notes = parse_shuttle_pdf(PDF.read_bytes())
+    assert notes == [
+        "소요시간 10분, 퇴근(혼잡) 시간대는 20~30분 소요 예상",
+        "혼잡할 시 외부인은 탑승이 제한될 수 있습니다. (음료수를 들고 타지 마세요)",
+    ]
     groups = defaultdict(list)
     for t in trips:
         ParsedTrip(**t)  # 저장 모델로 그대로 검증되는 모양이어야 함

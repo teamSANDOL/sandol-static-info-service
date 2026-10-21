@@ -118,8 +118,10 @@ def test_admin_put_keeps_title_and_updated_by(
     assert "admin_audit sub=admin-sub action=shuttle_put" in caplog.text
 
     # GET은 공개 유지
-    got = api.get("/bus/timetable", params={"all": "true"})
-    assert got.status_code == 200 and got.json()["trips"][0]["note"] == "첫차"
+    got = api.get("/bus/timetable", params={"date": "2026-10-22"})
+    assert got.status_code == 200
+    main_in = got.json()["routes"][0]["directions"][1]
+    assert main_in["segments"] == [{"type": "fixed", "time": "08:40", "note": "첫차"}]
 
     assert api.delete(f"/bus/timetable/{PLACE}", headers=headers).status_code == 204
     assert api.delete(f"/bus/timetable/{PLACE}", headers=headers).status_code == 404

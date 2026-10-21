@@ -515,9 +515,20 @@ def _cam_days(page, region, hdr_top, cols, page_day):
     return out
 
 
-def parse_shuttle_pdf(data: bytes) -> tuple[str | None, list[dict]]:
-    """PDF 바이트 → (제목, ParsedTrip 모양 dict 목록)."""
+def _notes(text):
+    """표 밖 안내문. '소요시간 …' 줄과 '•' 글머리 줄(표 제목 『』 제외)만 모읍니다."""
+    out = []
+    for raw in text.splitlines():
+        line = raw.strip()
+        if "소요시간" in line or (line.startswith("•") and "『" not in line):
+            out.append(PERIOD.sub("", line).strip(" •"))
+    return [n for n in out if n]
+
+
+def parse_shuttle_pdf(data: bytes) -> tuple[str | None, list[dict], list[str]]:
+    """PDF 바이트 → (제목, ParsedTrip 모양 dict 목록, 표 밖 안내문 목록)."""
     trips: list[dict] = []
+    notes: list[str] = []
     title = None
     with pdfplumber.open(io.BytesIO(data)) as pdf:
         for page in pdf.pages:
@@ -528,6 +539,7 @@ def parse_shuttle_pdf(data: bytes) -> tuple[str | None, list[dict]]:
             if title is None:
                 lines = [x.strip() for x in text.strip().splitlines() if x.strip()]
                 title = lines[0] if lines else None
+            notes += _notes(text)
             day = _day_type(text)
             valid_from, valid_to = _period(text)
 
@@ -548,4 +560,4 @@ def parse_shuttle_pdf(data: bytes) -> tuple[str | None, list[dict]]:
     dropped = len(trips) - len(kept)
     if dropped:
         logger.warning("셔틀 PDF: 방향 확정 실패로 %d/%d건 제외", dropped, len(trips))
-    return title, kept
+    return title, kept, notes

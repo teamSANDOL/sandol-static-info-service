@@ -44,6 +44,9 @@ class Config:
     DATA_DIR: str = os.getenv("DATA_DIR", os.path.join(SERVICE_DIR, "data"))
     SHUTTLE_TIMETABLE_PATH: str = os.path.join(DATA_DIR, "shuttle_timetable.json")
     SHUTTLE_PDF_DIR: str = os.path.join(DATA_DIR, "shuttle_pdf")
+    # 저장소에 들어 있는 정적 자료(배포 이미지에 포함). 날짜·정류장은 이 파일을 고칩니다.
+    HOLIDAYS_PATH: str = os.path.join(CONFIG_DIR, "holidays.json")
+    SHUTTLE_STOPS_PATH: str = os.path.join(CONFIG_DIR, "shuttle_stops.json")
     # TUK World(총학생회 제휴 식당): SQLite + 이미지 디렉터리 (compose에서 볼륨 마운트)
     TUK_WORLD_DIR: str = os.getenv("TUK_WORLD_DIR", os.path.join(DATA_DIR, "tuk_world"))
     TUK_WORLD_DB_PATH: str = os.path.join(TUK_WORLD_DIR, "tuk_world.db")

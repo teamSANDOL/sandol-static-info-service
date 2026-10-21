@@ -6,12 +6,17 @@ import json
 import os
 import re
 from datetime import date, datetime, timezone
-from zoneinfo import ZoneInfo
+from functools import cache
 
 import httpx
 
 from app.config.config import Config, logger
-from app.config.shuttle_routes import SHUTTLE_DIRECTIONS
+from app.config.shuttle_routes import (
+    DIRECTION_IDS,
+    ROUTE_IDS,
+    SHUTTLE_DIRECTIONS,
+    STOP_IDS,
+)
 from app.schemas.shuttle import ParsedTrip, ShuttleTrip
 from app.utils.ibookdownloader import BookDownloader
 from app.utils.shuttle_pdf import parse_shuttle_pdf
@@ -76,7 +81,7 @@ async def ingest_shuttle_pdf(force: bool = False) -> dict | None:
     with open(os.path.join(Config.SHUTTLE_PDF_DIR, f"{slug}.pdf"), "wb") as f:
         f.write(content)
 
-    title, parsed = parse_shuttle_pdf(content)
+    title, parsed, notes = parse_shuttle_pdf(content)
     trips = [
         ShuttleTrip(**t, **SHUTTLE_DIRECTIONS[t["direction"]]).model_dump()
         for t in parsed
@@ -88,6 +93,7 @@ async def ingest_shuttle_pdf(force: bool = False) -> dict | None:
         "pdf_sha256": pdf_sha256,
         "parsed_at": datetime.now(timezone.utc).isoformat(),
         "source": "pdf",
+        "notes": notes,
         "trips": trips,
     }
     async with _lock:
@@ -113,11 +119,13 @@ async def save_user_timetable(
     trips: list[ParsedTrip],
     title: str | None,
     updated_by: str | None = None,
+    notes: list[str] | None = None,
 ) -> dict:
     """관리자가 직접 입력한 시간표를 저장합니다.
 
     같은 place 안에서는 수동 입력이 PDF보다 우선합니다(source="user"는 force 없는
     동기화가 덮어쓰지 않음). title은 입력값으로 바꾸고, PDF 출처 필드는 있으면 보존합니다.
+    notes가 None이면 기존 문서의 안내문을 물려받습니다.
     """
     shuttle_trips = [
         ShuttleTrip(**t.model_dump(), **SHUTTLE_DIRECTIONS[t.direction]) for t in trips
@@ -135,6 +143,7 @@ async def save_user_timetable(
             "source": "user",
             "updated_at": datetime.now(timezone.utc).isoformat(),
             "updated_by": updated_by,
+            "notes": (existing or {}).get("notes", []) if notes is None else notes,
             "trips": [t.model_dump() for t in shuttle_trips],
         }
         store[place] = doc
@@ -181,49 +190,167 @@ def _is_valid_on(valid_from: str | None, valid_to: str | None, md: str) -> bool:
     return md <= valid_to
 
 
-def query_trips(
-    store: dict[str, dict],
-    route: str | None = None,
-    day_type: str | None = None,
-    origin: str | None = None,
-    destination: str | None = None,
-    on_date: date | None = None,
-    include_all: bool = False,
-) -> list[dict]:
-    """저장된 문서에서 조건에 맞는 trips를 place(출처) 필드를 붙여 평탄화합니다.
+DAY_TYPES = {  # 응답 day_type → 그날 쓰는 원문 운행일. '주말' 표는 토·일 양쪽.
+    "weekday": {"평일"},
+    "saturday": {"토요일", "주말"},
+    "sunday": {"일요일", "주말"},
+    "holiday": {"공휴일"},
+}
 
-    route는 부분 일치, origin/destination은 정확히 일치하되 경유지(via)도 포함합니다.
-    include_all이 아니면 on_date(없으면 오늘, KST) 기준으로 유효한 trip만 남기고,
-    (day_type, direction, departure_time, departure_time_end, valid_from, valid_to) 기준으로
-    중복을 제거합니다.
+
+@cache
+def _load_json(path: str) -> dict:
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def day_type_of(on_date: date) -> tuple[str, str | None]:
+    """조회일 → (day_type, 공휴일 이름). 공휴일 파일에 없는 해는 요일로만 판정합니다."""
+    holidays = _load_json(Config.HOLIDAYS_PATH)
+    if on_date.year not in holidays["years"]:
+        logger.warning("공휴일 파일에 %d년이 없어 요일로만 판정합니다", on_date.year)
+    name = holidays["dates"].get(on_date.isoformat())
+    if name:
+        return "holiday", name
+    return {5: "saturday", 6: "sunday"}.get(on_date.weekday(), "weekday"), None
+
+
+def _with_year(valid_from: str, valid_to: str, on_date: date) -> tuple[str, str]:
+    """MM-DD 기간에 연도를 붙입니다. 연말을 걸치면 조회일이 들도록 앞/뒤 해를 씁니다."""
+    y = on_date.year
+    if valid_from <= valid_to:
+        return f"{y}-{valid_from}", f"{y}-{valid_to}"
+    if on_date.strftime("%m-%d") <= valid_to:
+        return f"{y - 1}-{valid_from}", f"{y}-{valid_to}"
+    return f"{y}-{valid_from}", f"{y + 1}-{valid_to}"
+
+
+def _period_of(trips: list[dict], md: str) -> tuple[str, str] | None:
+    """문서의 운행 기간(MM-DD). 조회일이 든 기간을 먼저, 없으면 가장 이른 기간."""
+    periods = sorted(
+        {
+            (t["valid_from"], t["valid_to"])
+            for t in trips
+            if t.get("valid_from") and t.get("valid_to")
+        }
+    )
+    hit = [p for p in periods if _is_valid_on(*p, md)]
+    return (hit or periods or [None])[0]
+
+
+def pick_document(store: dict[str, dict], on_date: date) -> dict:
+    """응답에 쓸 문서 1건. 조회일에 운행하는 문서 중 사용자 수정본·최신 순으로 고릅니다.
+
+    지난 학기 PDF도 place 키로 남아 있으므로 기간으로 거르고, 조회일이 어느 기간에도
+    없으면(방학 사이 등) 가장 최근 문서를 써서 빈 시간표로 내보냅니다.
     """
-    md = (on_date or datetime.now(ZoneInfo("Asia/Seoul")).date()).strftime("%m-%d")
-    out = []
+    md = on_date.strftime("%m-%d")
+    docs = list(store.values())
+    covering = [
+        d
+        for d in docs
+        if any(
+            _is_valid_on(t.get("valid_from"), t.get("valid_to"), md) for t in d["trips"]
+        )
+    ]
+    return max(
+        covering or docs,
+        key=lambda d: (
+            d.get("source") == "user",
+            d.get("updated_at") or d.get("parsed_at") or "",
+        ),
+    )
+
+
+def _segment(t: dict) -> dict:
+    """저장 trip → 응답 segment. 비고·운행일 비고·탑승 장소는 note 한 줄로 합칩니다."""
+    parts = (t.get("note"), t.get("day_note"), t.get("boarding_place"))
+    note = " · ".join(x for x in parts if x)
+    if t["kind"] == "fixed":
+        return {"type": "fixed", "time": t["departure_time"], "note": note or None}
+    return {
+        "type": t["kind"],
+        "start": t["departure_time"],
+        "end": t["departure_time_end"],
+        "note": note or None,
+    }
+
+
+def timetable_version(doc: dict, stops: list[dict], needs_review: bool) -> str:
+    """날짜와 무관한 응답 재료의 해시 앞 16자(ETag로도 씁니다).
+
+    trips·stops·notes·origin·needs_review와 공휴일 파일 내용이 재료입니다. 이 중
+    하나만 바뀌어도 값이 바뀌어야 앱이 304로 옛 응답을 계속 쓰지 않습니다.
+    """
+    body = {
+        "trips": doc["trips"],
+        "stops": stops,
+        "notes": doc.get("notes", []),
+        "origin": doc.get("source"),
+        "needs_review": needs_review,
+        "holidays": _load_json(Config.HOLIDAYS_PATH),
+    }
+    raw = json.dumps(body, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(raw.encode()).hexdigest()[:16]
+
+
+def build_timetable(doc: dict, on_date: date, needs_review: bool = False) -> dict:
+    """저장 문서 1건 → 모바일 응답(계약: 날짜·운행일·방향별 segments).
+
+    해당 날짜·운행일에 운행이 없는 방향도 6개 모두 `segments: []`로 넣습니다.
+    """
+    md = on_date.strftime("%m-%d")
+    day_type, holiday_name = day_type_of(on_date)
+    stops = _load_json(Config.SHUTTLE_STOPS_PATH)["stops"]
+    period = _period_of(doc["trips"], md)
+    valid_from, valid_to = _with_year(*period, on_date) if period else (None, None)
+
+    by_dir: dict[str, list[dict]] = {d: [] for d in DIRECTION_IDS}
     seen = set()
-    for p, doc in store.items():
-        for t in doc["trips"]:
-            if route and route not in t["route"]:
-                continue
-            if day_type and t["day_type"] != day_type:
-                continue
-            if origin and origin not in (t["origin"], *t["via"]):
-                continue
-            if destination and destination not in (t["destination"], *t["via"]):
-                continue
-            if not include_all and not _is_valid_on(
-                t.get("valid_from"), t.get("valid_to"), md
-            ):
-                continue
-            dedupe_key = (
-                t["day_type"],
-                t["direction"],
-                t["departure_time"],
-                t["departure_time_end"],
-                t.get("valid_from"),
-                t.get("valid_to"),
-            )
-            if dedupe_key in seen:
-                continue
-            seen.add(dedupe_key)
-            out.append({"place": p, **t})
-    return out
+    for raw in doc["trips"]:
+        t = ShuttleTrip(**raw).model_dump()  # kind가 없던 옛 저장본도 기본값으로 읽음
+        key = (t["direction"], t["kind"], t["departure_time"], t["departure_time_end"])
+        if (
+            t["day_type"] not in DAY_TYPES[day_type]
+            or not _is_valid_on(t["valid_from"], t["valid_to"], md)
+            or key in seen
+        ):
+            continue
+        seen.add(key)
+        by_dir[t["direction"]].append(_segment(t))
+
+    routes: dict[str, dict] = {}
+    for direction, dir_id in DIRECTION_IDS.items():
+        info = SHUTTLE_DIRECTIONS[direction]
+        route = routes.setdefault(
+            ROUTE_IDS[info["route"]],
+            {"id": ROUTE_IDS[info["route"]], "name": info["route"], "directions": []},
+        )
+        segments = sorted(by_dir[direction], key=lambda g: g.get("time") or g["start"])
+        route["directions"].append(
+            {
+                "id": dir_id,
+                "from": STOP_IDS[info["origin"]],
+                "to": STOP_IDS[info["destination"]],
+                "via": [STOP_IDS[v] for v in info["via"]],
+                "segments": segments,
+            }
+        )
+    return {
+        "date": on_date.isoformat(),
+        "day_type": day_type,
+        "holiday_name": holiday_name,
+        "version": timetable_version(doc, stops, needs_review),
+        "valid_from": valid_from,
+        "valid_to": valid_to,
+        "source": {
+            "title": doc.get("place"),
+            "pdf_url": doc.get("pdf_url"),
+            "parsed_at": doc.get("parsed_at"),
+            "origin": doc.get("source"),
+            "needs_review": needs_review,
+        },
+        "stops": stops,
+        "routes": list(routes.values()),
+        "notes": doc.get("notes", []),
+    }

@@ -98,6 +98,10 @@ class ParsedTimetable(BaseModel):
         )
     )
     trips: list[ParsedTrip]
+    notes: list[str] | None = Field(
+        default=None,
+        description="표 밖 안내문(예: 소요시간). 생략하면 기존 문서의 안내문을 유지",
+    )
 
 
 class ShuttleTrip(ParsedTrip):
