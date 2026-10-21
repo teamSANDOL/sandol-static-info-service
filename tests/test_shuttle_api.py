@@ -125,3 +125,63 @@ def test_version_tracks_holiday_file(
     after = api.get("/bus/timetable", params={"date": "2026-10-22"}).json()
     assert (after["day_type"], after["holiday_name"]) == ("holiday", "임시공휴일")
     assert after["version"] != before["version"]
+
+
+def test_validation_rules(monkeypatch: pytest.MonkeyPatch) -> None:
+    good = _ingest(monkeypatch)
+    trips = good["trips"]
+    assert "problems" not in good and "pending" not in good
+    assert st.validate_trips(trips, ["평일", "토요일"], good) == []
+
+    one_way = [t for t in trips if t["direction"] != "정왕역 → 본교"]
+    assert "한쪽 방향" in st.validate_trips(one_way, [], None)[0]
+    weekday_only = [t for t in trips if t["day_type"] != "토요일"]
+    assert st.validate_trips(weekday_only, ["토요일"], None) == [
+        "본문에 '토요일'이 있는데 토요일 운행편이 없습니다"
+    ]
+    assert st.validate_trips(weekday_only, ["평일"], None) == []
+    main = [t for t in trips if t["route"] == "정왕역 ↔ 본교"][:10] + [
+        t for t in trips if t["direction"] == "정왕역 → 본교"
+    ][:2]
+    assert st.validate_trips(main, [], good) == [f"편수 급감: {len(trips)} → 12"]
+    reversed_range = [
+        {**t, "departure_time_end": "08:00"} if t["kind"] != "fixed" else t
+        for t in trips
+    ]
+    assert st.validate_trips(reversed_range, [], None)[0].startswith("구간 시작")
+    assert st.validate_trips([], [], None) == ["운행편이 하나도 없습니다"]
+
+
+def test_failed_parse_keeps_previous(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    _ingest(monkeypatch)
+    before = api.get("/bus/timetable", params={"date": "2026-10-24"}).json()
+    title, trips, notes, _ = st.parse_shuttle_pdf(PDF.read_bytes())
+    broken = [t for t in trips if t["day_type"] != "토요일"]  # 토요일 열을 놓친 파싱
+    monkeypatch.setattr(
+        st, "parse_shuttle_pdf", lambda _: (title, broken, notes, ["토요일"])
+    )
+    doc = _ingest(monkeypatch, b"%PDF new version")
+    assert doc["pending"]["problems"] and "검토 대기" in caplog.text
+    after = api.get("/bus/timetable", params={"date": "2026-10-24"}).json()
+    assert after["source"]["needs_review"] is True
+    assert after["routes"] == before["routes"]  # 직전 정상본을 그대로 내보냄
+    assert after["version"] != before["version"]
+    # 같은 PDF가 다시 와도 검토 대기본과 해시가 같아 다시 파싱하지 않음
+    assert _ingest(monkeypatch, b"%PDF new version") is None
+
+
+def test_user_override_clears_review(monkeypatch: pytest.MonkeyPatch) -> None:
+    _ingest(monkeypatch)
+    title, trips, notes, _ = st.parse_shuttle_pdf(PDF.read_bytes())
+    monkeypatch.setattr(st, "parse_shuttle_pdf", lambda _: (title, [], notes, []))
+    _ingest(monkeypatch, b"%PDF empty")
+    assert st.needs_review(st.load_store()[PLACE])
+    kept = [st.ParsedTrip(**t) for t in st.load_store()[PLACE]["trips"]]
+    asyncio.run(st.save_user_timetable(PLACE, kept, "직접"))
+    body = api.get("/bus/timetable", params={"date": "2026-10-22"}).json()
+    assert body["source"]["origin"] == "user"
+    assert body["source"]["needs_review"] is False
+    # 사용자 수정본은 force 없는 동기화가 건드리지 않음
+    assert _ingest(monkeypatch, b"%PDF another") is None

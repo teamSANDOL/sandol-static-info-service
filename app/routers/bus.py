@@ -20,6 +20,7 @@ from app.utils.shuttle_timetable import (
     build_timetable,
     delete_timetable,
     load_store,
+    needs_review,
     pick_document,
     save_user_timetable,
     sync_shuttle_timetables,
@@ -128,7 +129,8 @@ async def get_shuttle_timetable(date: datetime.date | None = None):
             detail="timetable_unavailable",
         )
     query_date = date or datetime.datetime.now(KST).date()
-    return build_timetable(pick_document(store, query_date), query_date)
+    doc = pick_document(store, query_date)
+    return build_timetable(doc, query_date, needs_review=needs_review(doc))
 
 
 @router.post(

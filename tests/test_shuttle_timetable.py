@@ -69,6 +69,7 @@ PARSED = [
     },
 ]
 
+PARSE_RESULT = ("제목", PARSED, ["안내"], ["평일", "토요일"])
 PDF_BYTES = b"%PDF-1.4 fake"
 
 
@@ -107,7 +108,7 @@ def check_hash_guard():
     parse = AsyncMock()
     with (
         patch.object(st, "fetch_shuttle_pdf", _fetch(place="해시가드")),
-        patch.object(st, "parse_shuttle_pdf", return_value=("제목", PARSED, ["안내"])) as p,
+        patch.object(st, "parse_shuttle_pdf", return_value=PARSE_RESULT) as p,
     ):
         doc1 = asyncio.run(st.ingest_shuttle_pdf())
         doc2 = asyncio.run(st.ingest_shuttle_pdf())
@@ -138,7 +139,7 @@ def check_user_override():
 
     with (
         patch.object(st, "fetch_shuttle_pdf", _fetch(place="사용자수정")),
-        patch.object(st, "parse_shuttle_pdf", return_value=("제목", PARSED, ["안내"])) as p,
+        patch.object(st, "parse_shuttle_pdf", return_value=PARSE_RESULT) as p,
     ):
         assert asyncio.run(st.ingest_shuttle_pdf()) is None
         assert p.call_count == 0
@@ -275,7 +276,7 @@ def run():
     # 저장 → 조회 전 구간
     with (
         patch.object(st, "fetch_shuttle_pdf", _fetch()),
-        patch.object(st, "parse_shuttle_pdf", return_value=("2학기", PARSED, [])),
+        patch.object(st, "parse_shuttle_pdf", return_value=("2학기", PARSED, [], [])),
     ):
         doc = asyncio.run(st.ingest_shuttle_pdf())
     assert len(doc["trips"]) == 2

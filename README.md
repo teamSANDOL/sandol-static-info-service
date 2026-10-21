@@ -88,6 +88,8 @@ trip 1건의 필드: `route`, `direction`, `origin`, `destination`, `via[]`, `da
 - 정류장(`stops`)은 `app/config/shuttle_stops.json`에서 관리합니다. `id`는 코드에서 고정이고 이름·좌표·탑승 안내만 고칩니다
 - `version`은 날짜와 무관한 시간표 내용(trips·stops·notes·origin·needs_review)과 공휴일 파일 내용의 sha256 앞 16자입니다
 
+**파싱 직후 검증**: 새 파싱본은 저장 전에 검사합니다(노선마다 반대 방향 한 쌍 이상, 수시운행·도착버스 구간의 시작 < 종료, 본문에 '토요일'이 있으면 토요일 편 1건 이상, 같은 place 직전 정상본 대비 편수 절반 미만 급감 금지). 실패하면 `WARNING` 로그를 남기고 직전 정상본을 그대로 내보내며 새 파싱본은 문서의 `pending`(검토 대기)에 둡니다. 응답 `source.needs_review`가 `true`가 됩니다. 비교할 정상본이 없거나 `force=true`로 동기화하면 새 파싱본을 쓰되 `problems`로 표시해 역시 `needs_review: true`입니다. 관리자가 PUT/관리자 화면으로 저장하면 풀립니다.
+
 **사용자 직접 수정이 우선**: `PUT /bus/timetable/{place}`로 trips를 직접 입력하면 `source: "user"`로 저장되고, 이후 cron/refresh는 이 place를 다시 파싱하지 않고 건너뜁니다(로그만 남김). 되돌리려면 `DELETE /bus/timetable/{place}`로 사용자 수정본을 지우거나, `POST /bus/timetable/refresh?force=true`로 사용자 수정본과 해시 가드를 모두 무시하고 강제로 재파싱합니다.
 
 자체 점검: `python tests/test_shuttle_timetable.py`

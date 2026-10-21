@@ -525,10 +525,16 @@ def _notes(text):
     return [n for n in out if n]
 
 
-def parse_shuttle_pdf(data: bytes) -> tuple[str | None, list[dict], list[str]]:
-    """PDF 바이트 → (제목, ParsedTrip 모양 dict 목록, 표 밖 안내문 목록)."""
+def parse_shuttle_pdf(
+    data: bytes,
+) -> tuple[str | None, list[dict], list[str], list[str]]:
+    """PDF 바이트 → (제목, ParsedTrip 모양 dict 목록, 표 밖 안내문, 본문에 나온 운행일).
+
+    운행일 목록은 파싱 직후 검증('토요일'이 적혀 있으면 토요일 편이 있어야 함)에 씁니다.
+    """
     trips: list[dict] = []
     notes: list[str] = []
+    days: set[str] = set()
     title = None
     with pdfplumber.open(io.BytesIO(data)) as pdf:
         for page in pdf.pages:
@@ -540,6 +546,7 @@ def parse_shuttle_pdf(data: bytes) -> tuple[str | None, list[dict], list[str]]:
                 lines = [x.strip() for x in text.strip().splitlines() if x.strip()]
                 title = lines[0] if lines else None
             notes += _notes(text)
+            days |= {d for d in DAY_TOKENS if d in text.replace(" ", "")}
             day = _day_type(text)
             valid_from, valid_to = _period(text)
 
@@ -560,4 +567,4 @@ def parse_shuttle_pdf(data: bytes) -> tuple[str | None, list[dict], list[str]]:
     dropped = len(trips) - len(kept)
     if dropped:
         logger.warning("셔틀 PDF: 방향 확정 실패로 %d/%d건 제외", dropped, len(trips))
-    return title, kept, notes
+    return title, kept, notes, sorted(days)

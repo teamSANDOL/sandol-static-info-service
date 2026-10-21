@@ -61,7 +61,10 @@ async def ingest_shuttle_pdf(force: bool = False) -> dict | None:
     """PDF 다운로드 → 파싱 → place 키로 저장. 변경이 없으면 건너뛰고 None을 반환합니다.
 
     - `force`가 아니고 기존 문서가 사용자 수정본(`source == "user"`)이면 덮어쓰지 않습니다.
-    - `force`가 아니고 PDF sha256이 기존 문서와 같으면 파싱을 건너뜁니다.
+    - `force`가 아니고 PDF sha256이 기존 문서(또는 검토 대기본)와 같으면 건너뜁니다.
+    - 새 파싱본이 검증(`validate_trips`)에 실패하면 직전 정상본을 그대로 두고 새 것은
+      `pending`(검토 대기)에 넣습니다. 비교할 정상본이 없으면 새 것을 쓰되 `problems`로
+      표시합니다(force일 때도 같음). 관리자가 PUT으로 고치면 풀립니다.
     """
     place, pdf_url, content = await fetch_shuttle_pdf()
 
@@ -72,7 +75,11 @@ async def ingest_shuttle_pdf(force: bool = False) -> dict | None:
         return None
 
     pdf_sha256 = hashlib.sha256(content).hexdigest()
-    if not force and existing is not None and existing.get("pdf_sha256") == pdf_sha256:
+    known = (
+        existing.get("pdf_sha256"),
+        (existing.get("pending") or {}).get("pdf_sha256"),
+    ) if existing else ()
+    if not force and pdf_sha256 in known:
         logger.info("셔틀 시간표 PDF 변경 없음, 파싱 건너뜀: place=%s", place)
         return None
 
@@ -81,7 +88,7 @@ async def ingest_shuttle_pdf(force: bool = False) -> dict | None:
     with open(os.path.join(Config.SHUTTLE_PDF_DIR, f"{slug}.pdf"), "wb") as f:
         f.write(content)
 
-    title, parsed, notes = parse_shuttle_pdf(content)
+    title, parsed, notes, days = parse_shuttle_pdf(content)
     trips = [
         ShuttleTrip(**t, **SHUTTLE_DIRECTIONS[t["direction"]]).model_dump()
         for t in parsed
@@ -96,12 +103,62 @@ async def ingest_shuttle_pdf(force: bool = False) -> dict | None:
         "notes": notes,
         "trips": trips,
     }
+    # force는 관리자가 PDF를 명시적으로 받아들이는 경로라 직전본으로 되돌리지 않습니다.
+    good = None if force or not existing or existing.get("problems") else existing
+    problems = validate_trips(trips, days, good)
+    if problems:
+        logger.warning(
+            "셔틀 시간표 검증 실패, 검토 대기: place=%s 문제=%s", place, problems
+        )
+        if good is not None:
+            # 직전 정상본을 계속 내보내고 새 파싱본은 검토 대기로만 둡니다.
+            doc = {**good, "pending": {**doc, "problems": problems}}
+        else:
+            doc["problems"] = problems  # 비교할 정상본이 없으면 그대로 쓰되 표시
     async with _lock:
         store = load_store()
         store[place] = doc
         _save_store(store)
     logger.info("셔틀 시간표 저장: place=%s trips=%d", place, len(trips))
     return doc
+
+
+def needs_review(doc: dict) -> bool:
+    """최신 파싱이 검증에 실패해 검토 대기 중인지(응답 source.needs_review)."""
+    return bool(doc.get("pending") or doc.get("problems"))
+
+
+def validate_trips(
+    trips: list[dict], days: list[str], previous: dict | None
+) -> list[str]:
+    """파싱 직후 검사. 문제 설명 목록을 돌려주며 비어 있으면 통과입니다.
+
+    - 노선마다 서로 반대인 방향 한 쌍 이상이 있어야 합니다.
+    - 수시운행·도착버스 구간은 시작 < 종료여야 합니다.
+    - 본문에 '토요일'이 있으면 토요일 편이 하나 이상 있어야 합니다.
+    - 같은 place의 직전 정상본보다 편수가 절반 미만으로 줄면 의심합니다.
+    """
+    problems = []
+    if not trips:
+        return ["운행편이 하나도 없습니다"]
+    for route in sorted({t["route"] for t in trips}):
+        dirs = {t["direction"] for t in trips if t["route"] == route}
+        if not any(" → ".join(reversed(d.split(" → "))) in dirs for d in dirs):
+            only = ", ".join(sorted(dirs))
+            problems.append(f"{route}: 한쪽 방향 운행편만 있습니다({only})")
+    bad = [
+        t["departure_time"]
+        for t in trips
+        if t["kind"] != "fixed" and not t["departure_time"] < t["departure_time_end"]
+    ]
+    if bad:
+        problems.append(f"구간 시작이 종료보다 늦습니다: {', '.join(bad)}")
+    if "토요일" in days and not any(t["day_type"] == "토요일" for t in trips):
+        problems.append("본문에 '토요일'이 있는데 토요일 운행편이 없습니다")
+    before = len(previous["trips"]) if previous else 0
+    if len(trips) * 2 < before:
+        problems.append(f"편수 급감: {before} → {len(trips)}")
+    return problems
 
 
 async def sync_shuttle_timetables(force: bool = False) -> list[str]:
