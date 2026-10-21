@@ -9,6 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.config import Config
+from app.routers import bus
 from app.utils import shuttle_timetable as st
 from main import app
 
@@ -185,3 +186,33 @@ def test_user_override_clears_review(monkeypatch: pytest.MonkeyPatch) -> None:
     assert body["source"]["needs_review"] is False
     # 사용자 수정본은 force 없는 동기화가 건드리지 않음
     assert _ingest(monkeypatch, b"%PDF another") is None
+
+
+def test_etag_and_304(monkeypatch: pytest.MonkeyPatch) -> None:
+    _ingest(monkeypatch)
+    res = api.get("/bus/timetable", params={"date": "2026-10-22"})
+    version = res.json()["version"]
+    assert res.headers["etag"] == f'"{version}"'
+    assert res.headers["cache-control"] == "public, max-age=300"
+
+    for tag in (f'"{version}"', f'W/"{version}"', f'"other", "{version}"', "*"):
+        hit = api.get(
+            "/bus/timetable",
+            params={"date": "2026-10-22"},
+            headers={"If-None-Match": tag},
+        )
+        assert hit.status_code == 304 and hit.content == b""
+        assert hit.headers["etag"] == f'"{version}"'
+        assert hit.headers["cache-control"] == "public, max-age=300"
+
+    for tag in ('"stale"', version):  # 따옴표 없는 값은 ETag 형식이 아님
+        miss = api.get(
+            "/bus/timetable",
+            params={"date": "2026-10-22"},
+            headers={"If-None-Match": tag},
+        )
+        assert miss.status_code == 200 and miss.json()["version"] == version
+    # 503에는 캐시 헤더를 붙이지 않음
+    monkeypatch.setattr(bus, "load_store", dict)
+    gone = api.get("/bus/timetable")
+    assert gone.status_code == 503 and "etag" not in gone.headers

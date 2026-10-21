@@ -11,7 +11,7 @@ import datetime
 from typing import Annotated
 from zoneinfo import ZoneInfo
 
-from fastapi import Depends, HTTPException
+from fastapi import Depends, Header, HTTPException, Response
 
 from app.config import Config, logger
 from app.routers.ibook_images import create_ibook_image_router
@@ -46,6 +46,7 @@ def _audit(sub: str, action: str, target: str) -> None:
 router = create_ibook_image_router("/bus", Config.SHUTTLE_URL, "버스")
 
 
+_CACHE_CONTROL = "public, max-age=300"
 _EXAMPLE = {
     "date": "2026-10-22",
     "day_type": "weekday",
@@ -115,13 +116,24 @@ _EXAMPLE = {
             ),
             "content": {Config.Accept.JSON: {"example": _EXAMPLE}},
         },
+        Config.HttpStatus.NOT_MODIFIED: {
+            "description": "If-None-Match가 현재 version과 같습니다(본문 없음)."
+        },
         Config.HttpStatus.SERVICE_UNAVAILABLE: {
             "description": "저장된 시간표가 아예 없습니다(timetable_unavailable)."
         },
     },
 )
-async def get_shuttle_timetable(date: datetime.date | None = None):
-    """조회일 하루치 셔틀 시간표를 모바일이 해석 없이 그릴 수 있는 형태로 반환합니다."""
+async def get_shuttle_timetable(
+    response: Response,
+    date: datetime.date | None = None,
+    if_none_match: Annotated[str | None, Header()] = None,
+):
+    """조회일 하루치 셔틀 시간표를 모바일이 해석 없이 그릴 수 있는 형태로 반환합니다.
+
+    응답에 `ETag: "<version>"`와 `Cache-Control: public, max-age=300`을 붙이고,
+    `If-None-Match`가 현재 version과 같으면 본문 없이 304를 돌려줍니다.
+    """
     store = load_store()
     if not store:
         raise HTTPException(
@@ -130,7 +142,18 @@ async def get_shuttle_timetable(date: datetime.date | None = None):
         )
     query_date = date or datetime.datetime.now(KST).date()
     doc = pick_document(store, query_date)
-    return build_timetable(doc, query_date, needs_review=needs_review(doc))
+    body = build_timetable(doc, query_date, needs_review=needs_review(doc))
+    headers = {"ETag": f'"{body["version"]}"', "Cache-Control": _CACHE_CONTROL}
+    if _etag_matches(if_none_match, body["version"]):
+        return Response(status_code=Config.HttpStatus.NOT_MODIFIED, headers=headers)
+    response.headers.update(headers)
+    return body
+
+
+def _etag_matches(if_none_match: str | None, version: str) -> bool:
+    """If-None-Match(쉼표 목록, W/ 약한 태그, *)에 현재 version이 있는지."""
+    tags = {t.strip().removeprefix("W/") for t in (if_none_match or "").split(",")}
+    return "*" in tags or f'"{version}"' in tags
 
 
 @router.post(
