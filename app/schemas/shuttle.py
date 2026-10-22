@@ -4,6 +4,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+HHMM = r"^([01]\d|2[0-3]):[0-5]\d$"  # 24시간 HH:MM
 TripKind = Literal["fixed", "frequent", "arrival_board"]
 DayType = Literal["평일", "토요일", "일요일", "주말", "공휴일"]
 
@@ -32,10 +33,11 @@ class ParsedTrip(BaseModel):
         description="운행일 표기 옆 괄호 안 텍스트만. 예: '토요일(일학습병행학부)' → '일학습병행학부'. 각주/안내문은 넣지 말 것. 없으면 null"
     )
     departure_time: str = Field(
-        description="출발 시각 HH:MM (24시간). 시간 범위면 시작 시각"
+        pattern=HHMM, description="출발 시각 HH:MM (24시간). 시간 범위면 시작 시각"
     )
     departure_time_end: str | None = Field(
-        description="수시운행 등 시간 범위일 때 종료 시각 HH:MM. 단일 시각이면 null"
+        pattern=HHMM,
+        description="수시운행 등 시간 범위일 때 종료 시각 HH:MM. 단일 시각이면 null",
     )
     valid_from: str | None = Field(
         description=(

@@ -5,8 +5,9 @@ import hashlib
 import json
 import os
 import re
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from functools import cache
+from zoneinfo import ZoneInfo
 
 import httpx
 
@@ -21,6 +22,7 @@ from app.schemas.shuttle import ParsedTrip, ShuttleTrip
 from app.utils.ibookdownloader import BookDownloader
 from app.utils.shuttle_pdf import parse_shuttle_pdf
 
+KST = ZoneInfo("Asia/Seoul")
 _lock = asyncio.Lock()  # ponytail: 파일 단위 락, DB로 옮기기 전까지 충분
 
 
@@ -76,9 +78,13 @@ async def ingest_shuttle_pdf(force: bool = False) -> dict | None:
 
     pdf_sha256 = hashlib.sha256(content).hexdigest()
     known = (
-        existing.get("pdf_sha256"),
-        (existing.get("pending") or {}).get("pdf_sha256"),
-    ) if existing else ()
+        (
+            existing.get("pdf_sha256"),
+            (existing.get("pending") or {}).get("pdf_sha256"),
+        )
+        if existing
+        else ()
+    )
     if not force and pdf_sha256 in known:
         logger.info("셔틀 시간표 PDF 변경 없음, 파싱 건너뜀: place=%s", place)
         return None
@@ -99,13 +105,17 @@ async def ingest_shuttle_pdf(force: bool = False) -> dict | None:
         "pdf_url": pdf_url,
         "pdf_sha256": pdf_sha256,
         "parsed_at": datetime.now(timezone.utc).isoformat(),
+        "ref_date": _today().isoformat(),
         "source": "pdf",
         "notes": notes,
         "trips": trips,
     }
     # force는 관리자가 PDF를 명시적으로 받아들이는 경로라 직전본으로 되돌리지 않습니다.
     good = None if force or not existing or existing.get("problems") else existing
-    problems = validate_trips(trips, days, good)
+    async with _lock:
+        others = [d for k, d in load_store().items() if k != place]
+    previous = good or _latest_good(others)
+    problems = validate_trips(trips, days, previous, same_place=good is not None)
     if problems:
         logger.warning(
             "셔틀 시간표 검증 실패, 검토 대기: place=%s 문제=%s", place, problems
@@ -128,15 +138,26 @@ def needs_review(doc: dict) -> bool:
     return bool(doc.get("pending") or doc.get("problems"))
 
 
+def _latest_good(docs: list[dict]) -> dict | None:
+    """검토 표시가 없는 문서 중 가장 최근 것(학기 교체 시 비교 대상)."""
+    good = [d for d in docs if not d.get("problems")]
+    return max(good, key=_recency, default=None)
+
+
 def validate_trips(
-    trips: list[dict], days: list[str], previous: dict | None
+    trips: list[dict],
+    days: list[str],
+    previous: dict | None,
+    same_place: bool = True,
 ) -> list[str]:
     """파싱 직후 검사. 문제 설명 목록을 돌려주며 비어 있으면 통과입니다.
 
     - 노선마다 서로 반대인 방향 한 쌍 이상이 있어야 합니다.
     - 수시운행·도착버스 구간은 시작 < 종료여야 합니다.
-    - 본문에 '토요일'이 있으면 토요일 편이 하나 이상 있어야 합니다.
-    - 같은 place의 직전 정상본보다 편수가 절반 미만으로 줄면 의심합니다.
+    - 표 머리에 '토요일'이 있으면 토요일 편이 하나 이상 있어야 합니다.
+    - 직전 정상본(previous)에 있던 노선이 통째로 사라지면 의심합니다.
+    - 같은 place의 직전 정상본이면 편수가 절반 미만으로 줄어도 의심합니다. 학기가
+      바뀐 새 place는 방학 시간표처럼 편수가 원래 크게 줄 수 있어 이 검사를 뺍니다.
     """
     problems = []
     if not trips:
@@ -154,9 +175,14 @@ def validate_trips(
     if bad:
         problems.append(f"구간 시작이 종료보다 늦습니다: {', '.join(bad)}")
     if "토요일" in days and not any(t["day_type"] == "토요일" for t in trips):
-        problems.append("본문에 '토요일'이 있는데 토요일 운행편이 없습니다")
-    before = len(previous["trips"]) if previous else 0
-    if len(trips) * 2 < before:
+        problems.append("표 머리에 '토요일'이 있는데 토요일 운행편이 없습니다")
+    if previous is None:
+        return problems
+    lost = {t["route"] for t in previous["trips"]} - {t["route"] for t in trips}
+    if lost:
+        problems.append(f"노선 소실: {', '.join(sorted(lost))}")
+    before = len(previous["trips"])
+    if same_place and len(trips) * 2 < before:
         problems.append(f"편수 급감: {before} → {len(trips)}")
     return problems
 
@@ -197,6 +223,9 @@ async def save_user_timetable(
             "pdf_url": existing.get("pdf_url") if existing else None,
             "pdf_sha256": existing.get("pdf_sha256") if existing else None,
             "parsed_at": existing.get("parsed_at") if existing else None,
+            # 수정해도 문서의 연도 기준은 그대로(2025 문서를 2026에 고쳐도 2025)
+            "ref_date": (_ref_date(existing) if existing else None)
+            or _today().isoformat(),
             "source": "user",
             "updated_at": datetime.now(timezone.utc).isoformat(),
             "updated_by": updated_by,
@@ -221,13 +250,7 @@ async def delete_timetable(place: str) -> bool:
 
 
 def _is_valid_on(valid_from: str | None, valid_to: str | None, md: str) -> bool:
-    """trip의 운행 기간(MM-DD)에 조회일(md, MM-DD)이 포함되는지 판정.
-
-    - 둘 다 없으면 상시 운행이라 항상 포함.
-    - MM-DD 형식이 아닌 값이 섞이면, 데이터 유실보다 포함시키는 편이 안전하므로 True.
-    - valid_from > valid_to면 12-20~02-28처럼 해를 넘기는 구간으로 보고 OR 조건으로 판정.
-    - 한쪽만 있으면 그 경계만 검사.
-    """
+    """한쪽 경계만 있거나 형식이 깨진 옛 기간(MM-DD)용 판정. 애매하면 포함합니다."""
 
     def is_md(v: str | None) -> bool:
         return v is not None and re.fullmatch(r"\d{2}-\d{2}", v) is not None
@@ -245,6 +268,133 @@ def _is_valid_on(valid_from: str | None, valid_to: str | None, md: str) -> bool:
     if valid_from is not None:
         return md >= valid_from
     return md <= valid_to
+
+
+# 기준일보다 이만큼 전에 이미 끝난 기간이면 다음 해의 같은 기간으로 봅니다.
+_STALE = timedelta(days=60)
+
+
+def _today() -> date:
+    return datetime.now(KST).date()
+
+
+def _md_date(year: int, md: str) -> date:
+    month, day = int(md[:2]), int(md[3:])
+    try:
+        return date(year, month, day)
+    except ValueError:  # 평년의 02-29
+        return date(year, month, 28)
+
+
+def _ref_date(doc: dict) -> str | None:
+    """문서 연도의 기준일(YYYY-MM-DD). 원문엔 연도가 없어 이것으로 MM-DD에 연도를 붙입니다.
+
+    순서: 저장된 ref_date → 문서 유효기간 시작 → PDF 파싱일 → 제목·place의 'NN년'
+    (그해 7월 1일) → 수정일. 모두 없으면 None(조회일 기준, 옛 동작).
+    """
+    for key in ("ref_date", "valid_from", "parsed_at"):
+        if doc.get(key):
+            return str(doc[key])[:10]
+    m = re.search(r"(\d{2})년", f"{doc.get('place') or ''} {doc.get('title') or ''}")
+    if m:
+        return f"20{m.group(1)}-07-01"
+    return str(doc["updated_at"])[:10] if doc.get("updated_at") else None
+
+
+def _resolve(valid_from: str, valid_to: str, ref: date) -> tuple[date, date]:
+    """MM-DD 기간 → 기준일 근처의 실제 기간. 기준일 무렵 이미 끝난 해는 건너뜁니다."""
+    for year in (ref.year - 1, ref.year, ref.year + 1):
+        start = _md_date(year, valid_from)
+        end = _md_date(year + (valid_from > valid_to), valid_to)
+        if end >= ref - _STALE:
+            break
+    return start, end
+
+
+def _is_md_pair(valid_from: str | None, valid_to: str | None) -> bool:
+    return all(v and re.fullmatch(r"\d{2}-\d{2}", v) for v in (valid_from, valid_to))
+
+
+def _base(doc: dict, on_date: date) -> date:
+    ref = _ref_date(doc)
+    return date.fromisoformat(ref) if ref else on_date
+
+
+def _periods(doc: dict, on_date: date) -> list[tuple[date, date]]:
+    """문서의 운행 기간들(연도 포함). 관리자가 정한 문서 기간이 있으면 그것만 씁니다."""
+    if doc.get("valid_from") and doc.get("valid_to"):
+        return [
+            (date.fromisoformat(doc["valid_from"]), date.fromisoformat(doc["valid_to"]))
+        ]
+    base = _base(doc, on_date)
+    pairs = {
+        (t.get("valid_from"), t.get("valid_to"))
+        for t in doc["trips"]
+        if _is_md_pair(t.get("valid_from"), t.get("valid_to"))
+    }
+    return sorted(_resolve(a, b, base) for a, b in pairs)
+
+
+def doc_range(doc: dict, on_date: date) -> tuple[date, date] | None:
+    """문서 전체 유효기간. 기간 표기가 전혀 없으면 None(상시)."""
+    periods = _periods(doc, on_date)
+    if not periods:
+        return None
+    return min(p[0] for p in periods), max(p[1] for p in periods)
+
+
+def _recency(doc: dict) -> str:
+    return doc.get("updated_at") or doc.get("parsed_at") or ""
+
+
+def pick_document(store: dict[str, dict], on_date: date) -> dict:
+    """응답에 쓸 문서 1건.
+
+    1. 조회일을 (연도까지) 포함하는 문서끼리만 겨룹니다. 기간 표기가 있는 문서가 상시
+       문서보다, 그다음 사용자 수정본이, 그다음 최신이 앞섭니다. 그래서 지난해
+       수정본이 올해 PDF를 가리지 않습니다.
+    2. 포함하는 문서가 없으면 가장 최근에 끝난 문서, 그것도 없으면 가장 먼저 시작할
+       문서로 빈 시간표(기간은 그 문서의 실제 기간)를 내보냅니다.
+    """
+    docs = list(store.values())
+    ranges = [doc_range(d, on_date) for d in docs]
+    covering = [
+        (r is not None, d.get("source") == "user", _recency(d), i)
+        for i, (d, r) in enumerate(zip(docs, ranges, strict=True))
+        if r is None or r[0] <= on_date <= r[1]
+    ]
+    if covering:
+        return docs[max(covering)[3]]
+    ended = [
+        (r[1], _recency(d), i)
+        for i, (d, r) in enumerate(zip(docs, ranges, strict=True))
+        if r and r[1] < on_date
+    ]
+    if ended:
+        return docs[max(ended)[2]]
+    return docs[min((r[0], i) for i, r in enumerate(ranges) if r)[1]]
+
+
+def _period_on(doc: dict, on_date: date) -> tuple[date, date] | None:
+    """응답의 valid_from/valid_to. 조회일이 든 기간, 없으면 문서 전체 기간."""
+    periods = _periods(doc, on_date)
+    hit = [p for p in periods if p[0] <= on_date <= p[1]]
+    return hit[0] if hit else doc_range(doc, on_date)
+
+
+def _trip_on(t: dict, doc: dict, on_date: date) -> bool:
+    """trip이 조회일에 운행하는지(연도 포함).
+
+    문서 기간 안이어야 하고, trip 자체 기간(MM-DD)이 있으면 그 기간에도 들어야 합니다.
+    """
+    rng = doc_range(doc, on_date)
+    if rng is not None and not rng[0] <= on_date <= rng[1]:
+        return False
+    vf, vt = t.get("valid_from"), t.get("valid_to")
+    if not _is_md_pair(vf, vt) or doc.get("valid_from"):
+        return _is_valid_on(vf, vt, on_date.strftime("%m-%d"))
+    start, end = _resolve(vf, vt, _base(doc, on_date))
+    return start <= on_date <= end
 
 
 DAY_TYPES = {  # 응답 day_type → 그날 쓰는 원문 운행일. '주말' 표는 토·일 양쪽.
@@ -272,53 +422,6 @@ def day_type_of(on_date: date) -> tuple[str, str | None]:
     return {5: "saturday", 6: "sunday"}.get(on_date.weekday(), "weekday"), None
 
 
-def _with_year(valid_from: str, valid_to: str, on_date: date) -> tuple[str, str]:
-    """MM-DD 기간에 연도를 붙입니다. 연말을 걸치면 조회일이 들도록 앞/뒤 해를 씁니다."""
-    y = on_date.year
-    if valid_from <= valid_to:
-        return f"{y}-{valid_from}", f"{y}-{valid_to}"
-    if on_date.strftime("%m-%d") <= valid_to:
-        return f"{y - 1}-{valid_from}", f"{y}-{valid_to}"
-    return f"{y}-{valid_from}", f"{y + 1}-{valid_to}"
-
-
-def _period_of(trips: list[dict], md: str) -> tuple[str, str] | None:
-    """문서의 운행 기간(MM-DD). 조회일이 든 기간을 먼저, 없으면 가장 이른 기간."""
-    periods = sorted(
-        {
-            (t["valid_from"], t["valid_to"])
-            for t in trips
-            if t.get("valid_from") and t.get("valid_to")
-        }
-    )
-    hit = [p for p in periods if _is_valid_on(*p, md)]
-    return (hit or periods or [None])[0]
-
-
-def pick_document(store: dict[str, dict], on_date: date) -> dict:
-    """응답에 쓸 문서 1건. 조회일에 운행하는 문서 중 사용자 수정본·최신 순으로 고릅니다.
-
-    지난 학기 PDF도 place 키로 남아 있으므로 기간으로 거르고, 조회일이 어느 기간에도
-    없으면(방학 사이 등) 가장 최근 문서를 써서 빈 시간표로 내보냅니다.
-    """
-    md = on_date.strftime("%m-%d")
-    docs = list(store.values())
-    covering = [
-        d
-        for d in docs
-        if any(
-            _is_valid_on(t.get("valid_from"), t.get("valid_to"), md) for t in d["trips"]
-        )
-    ]
-    return max(
-        covering or docs,
-        key=lambda d: (
-            d.get("source") == "user",
-            d.get("updated_at") or d.get("parsed_at") or "",
-        ),
-    )
-
-
 def _segment(t: dict) -> dict:
     """저장 trip → 응답 segment. 비고·운행일 비고·탑승 장소는 note 한 줄로 합칩니다."""
     parts = (t.get("note"), t.get("day_note"), t.get("boarding_place"))
@@ -336,14 +439,13 @@ def _segment(t: dict) -> dict:
 def timetable_version(doc: dict, stops: list[dict], needs_review: bool) -> str:
     """날짜와 무관한 응답 재료의 해시 앞 16자(ETag로도 씁니다).
 
-    trips·stops·notes·origin·needs_review와 공휴일 파일 내용이 재료입니다. 이 중
-    하나만 바뀌어도 값이 바뀌어야 앱이 304로 옛 응답을 계속 쓰지 않습니다.
+    응답 본문(date·day_type·holiday_name 제외)을 만드는 재료 전부입니다: 검토 대기본을
+    뺀 저장 문서 전체(trips·notes·출처·기간·연도 기준), 정류장, needs_review, 공휴일
+    파일. 같은 시간표면 날짜가 달라도 같고, 본문에 나오는 값이 바뀌면 바뀝니다.
     """
     body = {
-        "trips": doc["trips"],
+        "doc": {k: v for k, v in doc.items() if k != "pending"},
         "stops": stops,
-        "notes": doc.get("notes", []),
-        "origin": doc.get("source"),
         "needs_review": needs_review,
         "holidays": _load_json(Config.HOLIDAYS_PATH),
     }
@@ -356,11 +458,9 @@ def build_timetable(doc: dict, on_date: date, needs_review: bool = False) -> dic
 
     해당 날짜·운행일에 운행이 없는 방향도 6개 모두 `segments: []`로 넣습니다.
     """
-    md = on_date.strftime("%m-%d")
     day_type, holiday_name = day_type_of(on_date)
     stops = _load_json(Config.SHUTTLE_STOPS_PATH)["stops"]
-    period = _period_of(doc["trips"], md)
-    valid_from, valid_to = _with_year(*period, on_date) if period else (None, None)
+    period = _period_on(doc, on_date)
 
     by_dir: dict[str, list[dict]] = {d: [] for d in DIRECTION_IDS}
     seen = set()
@@ -369,7 +469,7 @@ def build_timetable(doc: dict, on_date: date, needs_review: bool = False) -> dic
         key = (t["direction"], t["kind"], t["departure_time"], t["departure_time_end"])
         if (
             t["day_type"] not in DAY_TYPES[day_type]
-            or not _is_valid_on(t["valid_from"], t["valid_to"], md)
+            or not _trip_on(t, doc, on_date)
             or key in seen
         ):
             continue
@@ -398,8 +498,8 @@ def build_timetable(doc: dict, on_date: date, needs_review: bool = False) -> dic
         "day_type": day_type,
         "holiday_name": holiday_name,
         "version": timetable_version(doc, stops, needs_review),
-        "valid_from": valid_from,
-        "valid_to": valid_to,
+        "valid_from": period[0].isoformat() if period else None,
+        "valid_to": period[1].isoformat() if period else None,
         "source": {
             "title": doc.get("place"),
             "pdf_url": doc.get("pdf_url"),

@@ -138,13 +138,16 @@ def test_validation_rules(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "한쪽 방향" in st.validate_trips(one_way, [], None)[0]
     weekday_only = [t for t in trips if t["day_type"] != "토요일"]
     assert st.validate_trips(weekday_only, ["토요일"], None) == [
-        "본문에 '토요일'이 있는데 토요일 운행편이 없습니다"
+        "표 머리에 '토요일'이 있는데 토요일 운행편이 없습니다"
     ]
     assert st.validate_trips(weekday_only, ["평일"], None) == []
     main = [t for t in trips if t["route"] == "정왕역 ↔ 본교"][:10] + [
         t for t in trips if t["direction"] == "정왕역 → 본교"
     ][:2]
-    assert st.validate_trips(main, [], good) == [f"편수 급감: {len(trips)} → 12"]
+    assert st.validate_trips(main, [], good) == [
+        "노선 소실: 제2캠퍼스 ↔ 본교·정왕역",
+        f"편수 급감: {len(trips)} → 12",
+    ]
     reversed_range = [
         {**t, "departure_time_end": "08:00"} if t["kind"] != "fixed" else t
         for t in trips

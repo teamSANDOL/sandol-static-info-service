@@ -56,7 +56,9 @@ def _cx(w):
 
 
 def _vlines(page):
-    return sorted({round(l["x0"], 1) for l in page.lines if abs(l["x0"] - l["x1"]) < 1.5})
+    return sorted(
+        {round(l["x0"], 1) for l in page.lines if abs(l["x0"] - l["x1"]) < 1.5}
+    )
 
 
 def _hlines(page):
@@ -216,7 +218,9 @@ def _parse_grid(page, words, day_type, out):
                 " ".join(w["text"] for w in cells if not INT.match(w["text"])).strip()
                 or None
             )
-            for rng in re.finditer(r"(\d{1,2}):(\d{2})\s*~\s*(\d{1,2}):(\d{2})", joined):
+            for rng in re.finditer(
+                r"(\d{1,2}):(\d{2})\s*~\s*(\d{1,2}):(\d{2})", joined
+            ):
                 out.append(
                     _trip(
                         direction,
@@ -347,7 +351,8 @@ def _parse_cam(page, words, out, grid_bottom, page_day):
     arrows = [
         w
         for w in region
-        if ("⇒" in w["text"] or "→" in w["text"]) and any(t > w["top"] for t in times_top)
+        if ("⇒" in w["text"] or "→" in w["text"])
+        and any(t > w["top"] for t in times_top)
     ]
     if not arrows:
         _parse_departure_cols(page, words, out, page_day)
@@ -424,21 +429,41 @@ def _cam_body(body, cols, days, out):
         return t
 
     for row in _rows(body):
-        depth, paren, last = 0, [], {}
-        for w in row:
-            # '★ 정왕역 출발은 꽃집앞 출발' 같은 각주는 그 줄 끝까지 시각이 아닙니다.
-            if w["text"].startswith(("★", "※")):
+        # 괄호는 셀(열) 안에서만 열고 닫습니다. 한 셀의 괄호가 다음 줄로 넘어가
+        # 닫히지 않아도 같은 줄 다른 열의 시각은 그대로 읽습니다.
+        parens: dict[int, list[dict]] = {}
+        last: dict[int, dict] = {}
+        for k, w in enumerate(row):
+            text = _unmark(row, k)
+            if text is None:  # '★ 정왕역 출발은 꽃집앞 출발' 같은 각주: 줄 끝까지 무시
                 break
-            if depth or w["text"].startswith("("):
-                depth += w["text"].count("(") - w["text"].count(")")
-                paren.append(w)
-                if depth <= 0:
-                    _cam_paren(paren, _col_of(cols, paren[0]), cols, last, emit)
-                    depth, paren = 0, []
+            if not text:
                 continue
             i = _col_of(cols, w)
-            for hh, mm in _times(w["text"]):
+            if i in parens or text.startswith("("):
+                buf = parens.setdefault(i, [])
+                buf.append({**w, "text": text})
+                if sum(x["text"].count("(") - x["text"].count(")") for x in buf) <= 0:
+                    _cam_paren(parens.pop(i), i, cols, last, emit)
+                continue
+            for hh, mm in _times(text):
                 last[i] = emit(i, cols[i][2], hh, mm)
+
+
+def _unmark(row, k):
+    """단어 앞 ★·※ 표시를 뗀 텍스트. 각주(표시 뒤가 시각이 아님)면 None.
+
+    '★8:30', '★ 8:30'처럼 표시가 붙은 운행 시각은 살리고, 표시 뒤에 안내문이
+    오는 줄만 각주로 봅니다.
+    """
+    text = row[k]["text"]
+    if not text.startswith(("★", "※")):
+        return text
+    rest = text.lstrip("★※ ")
+    nxt = row[k + 1]["text"] if k + 1 < len(row) else ""
+    if VALID_TIME.match(rest) or (not rest and VALID_TIME.match(nxt)):
+        return rest
+    return None
 
 
 def _times(text):
@@ -466,7 +491,9 @@ def _cam_paren(paren, i, cols, last, emit):
       '★ (정왕역출발 8:55, 9시 ) → 본교 운동장옆(서문) 건너편 … → 2캠퍼스'와 같습니다.
     """
     text = " ".join(w["text"] for w in paren)
-    times = _times(text) + [(h, "00") for h in re.findall(r"(\d{1,2})시(?!\s*이후)", text)]
+    times = _times(text) + [
+        (h, "00") for h in re.findall(r"(\d{1,2})시(?!\s*이후)", text)
+    ]
     if not times:
         note = text.strip("() ")
         if i in last and note:
@@ -525,12 +552,29 @@ def _notes(text):
     return [n for n in out if n]
 
 
+def _header_days(text):
+    """표 머리에 적힌 운행일. 본문 안내('토요일 운휴' 등)는 세지 않습니다.
+
+    표 제목 괄호('』시간표 (평일, 토요일)')와 운행일만 있는 줄('평 일 토요일')만 봅니다.
+    """
+    found = set()
+    for m in re.finditer(r"』\s*시간표\s*\(([^)]*)\)", text):
+        found |= {d for d in DAY_TOKENS if d in m.group(1).replace(" ", "")}
+    for line in text.splitlines():
+        flat = re.sub(r"\([^)]*\)", "", line).replace(" ", "")
+        hits = {d for d in DAY_TOKENS if d in flat}
+        if hits and not re.sub("|".join(DAY_TOKENS), "", flat).strip(",·/"):
+            found |= hits
+    return found
+
+
 def parse_shuttle_pdf(
     data: bytes,
 ) -> tuple[str | None, list[dict], list[str], list[str]]:
     """PDF 바이트 → (제목, ParsedTrip 모양 dict 목록, 표 밖 안내문, 본문에 나온 운행일).
 
-    운행일 목록은 파싱 직후 검증('토요일'이 적혀 있으면 토요일 편이 있어야 함)에 씁니다.
+    운행일 목록은 표 머리에 적힌 것만 모으며, 파싱 직후 검증('토요일' 머리글이 있으면
+    토요일 편이 있어야 함)에 씁니다.
     """
     trips: list[dict] = []
     notes: list[str] = []
@@ -546,7 +590,7 @@ def parse_shuttle_pdf(
                 lines = [x.strip() for x in text.strip().splitlines() if x.strip()]
                 title = lines[0] if lines else None
             notes += _notes(text)
-            days |= {d for d in DAY_TOKENS if d in text.replace(" ", "")}
+            days |= _header_days(text)
             day = _day_type(text)
             valid_from, valid_to = _period(text)
 

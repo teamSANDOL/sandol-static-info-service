@@ -132,7 +132,8 @@ async def get_shuttle_timetable(
     """조회일 하루치 셔틀 시간표를 모바일이 해석 없이 그릴 수 있는 형태로 반환합니다.
 
     응답에 `ETag: "<version>"`와 `Cache-Control: public, max-age=300`을 붙이고,
-    `If-None-Match`가 현재 version과 같으면 본문 없이 304를 돌려줍니다.
+    `If-None-Match`가 현재 태그와 같으면 본문 없이 304를 돌려줍니다. date를 생략하면
+    태그는 `"<version>-<YYYYMMDD(KST)>"`입니다.
     """
     store = load_store()
     if not store:
@@ -143,8 +144,11 @@ async def get_shuttle_timetable(
     query_date = date or datetime.datetime.now(KST).date()
     doc = pick_document(store, query_date)
     body = build_timetable(doc, query_date, needs_review=needs_review(doc))
-    headers = {"ETag": f'"{body["version"]}"', "Cache-Control": _CACHE_CONTROL}
-    if _etag_matches(if_none_match, body["version"]):
+    # version은 날짜와 무관하므로 date 없이(=오늘) 부르면 날짜를 태그에 섞어야
+    # 다음 날 재검증에서 어제 본문이 304로 남지 않습니다. 앱은 date를 항상 보냅니다.
+    tag = body["version"] if date else f"{body['version']}-{query_date:%Y%m%d}"
+    headers = {"ETag": f'"{tag}"', "Cache-Control": _CACHE_CONTROL}
+    if _etag_matches(if_none_match, tag):
         return Response(status_code=Config.HttpStatus.NOT_MODIFIED, headers=headers)
     response.headers.update(headers)
     return body
