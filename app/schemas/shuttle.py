@@ -1,8 +1,9 @@
 """셔틀버스 시간표 스키마. PDF 파싱 결과와 API 요청/응답에 공용으로 사용합니다."""
 
+from datetime import date
 from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 HHMM = r"^([01]\d|2[0-3]):[0-5]\d$"  # 24시간 HH:MM
 TripKind = Literal["fixed", "frequent", "arrival_board"]
@@ -120,3 +121,135 @@ class ShuttleTimetable(BaseModel):
 
     title: str | None = None
     trips: list[ShuttleTrip]
+
+
+# ---- 관리자 시간표 API (/bus/admin/timetables) ----
+
+# 공개 응답(GET /bus/timetable)의 directions[].id와 같은 계약 코드
+DirectionId = Literal[
+    "main_out",
+    "main_in",
+    "campus2_out",
+    "campus2_in",
+    "campus2_from_station",
+    "campus2_to_station",
+]
+MMDD = r"^(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$"
+
+
+class AdminTripIn(BaseModel):
+    """운행편 1건 입력. 시각은 24시간 HH:MM."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    direction: DirectionId = Field(description="방향 계약 코드")
+    day_type: DayType = Field(description="운행일. '주말'은 토·일 양쪽에 적용")
+    kind: TripKind = Field(
+        default="fixed",
+        description="fixed=정시 1편, frequent=수시운행 구간, arrival_board=도착버스 탑승 구간",
+    )
+    time: str = Field(pattern=HHMM, description="출발 시각(구간이면 시작)")
+    end: str | None = Field(
+        default=None, pattern=HHMM, description="구간 종료(arrival_board는 막차)"
+    )
+    note: str | None = Field(default=None, description="예: 막차, 오이도역 도착")
+    day_note: str | None = Field(default=None, description="예: 일학습병행학부")
+    boarding_place: str | None = None
+    valid_from: str | None = Field(
+        default=None,
+        pattern=MMDD,
+        description="문서 기간 안에서 이 편만 다른 기간일 때 MM-DD. 보통 비움",
+    )
+    valid_to: str | None = Field(default=None, pattern=MMDD)
+    period_note: str | None = None
+
+    @model_validator(mode="after")
+    def _check_range(self) -> "AdminTripIn":
+        """정시 편엔 종료가 없고, 구간엔 시작 < 종료가 있어야 합니다."""
+        if self.kind == "fixed" and self.end is not None:
+            raise ValueError("fixed 편에는 end를 넣지 않습니다.")
+        if self.kind != "fixed" and (self.end is None or not self.time < self.end):
+            raise ValueError(f"{self.kind}에는 time보다 늦은 end가 필요합니다.")
+        if (self.valid_from is None) != (self.valid_to is None):
+            raise ValueError("valid_from과 valid_to는 함께 넣습니다.")
+        return self
+
+
+class AdminTripOut(AdminTripIn):
+    """저장된 운행편. id는 문서 안에서 안정적이며 수정·삭제에 씁니다."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    id: str
+
+
+class AdminTimetableMeta(BaseModel):
+    """문서 메타. 유효기간은 연도 포함 날짜이며 둘 다 비우면 상시."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str | None = Field(default=None, max_length=200)
+    valid_from: date | None = None
+    valid_to: date | None = None
+    notes: list[str] = Field(default_factory=list, description="표 밖 안내문")
+
+    @model_validator(mode="after")
+    def _check_period(self) -> "AdminTimetableMeta":
+        """유효기간은 둘 다 넣거나 둘 다 비우며, 시작 ≤ 종료여야 합니다."""
+        if (self.valid_from is None) != (self.valid_to is None):
+            raise ValueError("valid_from과 valid_to는 함께 넣습니다.")
+        if self.valid_from and self.valid_to and self.valid_from > self.valid_to:
+            raise ValueError("valid_from은 valid_to보다 늦을 수 없습니다.")
+        return self
+
+
+class AdminTimetableCreate(AdminTimetableMeta):
+    """새 문서. place는 문서 키(중복 불가)."""
+
+    place: str = Field(min_length=1, max_length=200)
+    trips: list[AdminTripIn] = Field(default_factory=list)
+
+
+class AdminTimetablePatch(BaseModel):
+    """문서 메타 일부 수정. 보낸 필드만 바꿉니다(유효기간은 둘을 함께)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str | None = Field(default=None, max_length=200)
+    valid_from: date | None = None
+    valid_to: date | None = None
+    notes: list[str] | None = None
+
+
+class AdminPending(BaseModel):
+    """검토 대기 중인 새 PDF 파싱본 요약."""
+
+    parsed_at: str | None
+    pdf_url: str | None
+    trip_count: int
+    problems: list[str]
+
+
+class AdminTimetableSummary(BaseModel):
+    """문서 목록 1건. 유효기간은 연도 포함(기간 표기 없으면 null)."""
+
+    place: str
+    title: str | None
+    source: Literal["pdf", "user"]
+    valid_from: date | None
+    valid_to: date | None
+    trip_count: int
+    needs_review: bool
+    problems: list[str]
+    pending: AdminPending | None
+    updated_at: str | None
+    updated_by: str | None
+
+
+class AdminTimetableDetail(AdminTimetableSummary):
+    """문서 상세. 운행편마다 안정 id가 있습니다."""
+
+    pdf_url: str | None
+    parsed_at: str | None
+    notes: list[str]
+    trips: list[AdminTripOut]

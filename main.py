@@ -12,6 +12,7 @@ from app.routers import (
     bus_router,
     meal_router,
     organization_router,
+    shuttle_admin_router,
     tuk_world_router,
 )
 from app.config.config import logger
@@ -40,6 +41,7 @@ async def lifespan(app: FastAPI):
 # lifespan 적용
 app = FastAPI(lifespan=lifespan, root_path="/static-info")
 app.include_router(bus_router)
+app.include_router(shuttle_admin_router)
 app.include_router(meal_router)
 app.include_router(organization_router)
 app.include_router(tuk_world_router)

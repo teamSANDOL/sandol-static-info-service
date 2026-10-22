@@ -6,6 +6,7 @@ import json
 import os
 import re
 from datetime import date, datetime, timedelta, timezone
+from collections.abc import Callable
 from functools import cache
 from zoneinfo import ZoneInfo
 
@@ -81,6 +82,7 @@ async def ingest_shuttle_pdf(force: bool = False) -> dict | None:
         (
             existing.get("pdf_sha256"),
             (existing.get("pending") or {}).get("pdf_sha256"),
+            existing.get("rejected_sha256"),  # 관리자가 거부한 파싱본
         )
         if existing
         else ()
@@ -95,10 +97,12 @@ async def ingest_shuttle_pdf(force: bool = False) -> dict | None:
         f.write(content)
 
     title, parsed, notes, days = parse_shuttle_pdf(content)
-    trips = [
-        ShuttleTrip(**t, **SHUTTLE_DIRECTIONS[t["direction"]]).model_dump()
-        for t in parsed
-    ]
+    trips = with_trip_ids(
+        [
+            ShuttleTrip(**t, **SHUTTLE_DIRECTIONS[t["direction"]]).model_dump()
+            for t in parsed
+        ]
+    )
     doc = {
         "place": place,
         "title": title,
@@ -226,11 +230,14 @@ async def save_user_timetable(
             # 수정해도 문서의 연도 기준은 그대로(2025 문서를 2026에 고쳐도 2025)
             "ref_date": (_ref_date(existing) if existing else None)
             or _today().isoformat(),
+            # 관리자 API로 정한 연도 포함 유효기간도 이어받는다
+            "valid_from": (existing or {}).get("valid_from"),
+            "valid_to": (existing or {}).get("valid_to"),
             "source": "user",
             "updated_at": datetime.now(timezone.utc).isoformat(),
             "updated_by": updated_by,
             "notes": (existing or {}).get("notes", []) if notes is None else notes,
-            "trips": [t.model_dump() for t in shuttle_trips],
+            "trips": with_trip_ids([t.model_dump() for t in shuttle_trips]),
         }
         store[place] = doc
         _save_store(store)
@@ -511,3 +518,201 @@ def build_timetable(doc: dict, on_date: date, needs_review: bool = False) -> dic
         "routes": list(routes.values()),
         "notes": doc.get("notes", []),
     }
+
+
+# ---- 관리자 시간표 API용 저장 연산 ----
+
+_DIRECTION_BY_ID = {v: k for k, v in DIRECTION_IDS.items()}
+_TRIP_CORE = (
+    "direction",
+    "day_type",
+    "kind",
+    "departure_time",
+    "departure_time_end",
+    "valid_from",
+    "valid_to",
+)
+
+
+def with_trip_ids(trips: list[dict]) -> list[dict]:
+    """id 없는 trip에 내용 기반 id를 붙입니다(같은 내용이면 순번으로 구분).
+
+    내용 기반이라 문서를 다시 읽어도 같은 id가 나오고, 한 번 저장되면 그 trip을
+    고쳐도 id는 그대로입니다.
+    """
+    seen: dict[str, int] = {}
+    out = []
+    for t in trips:
+        if t.get("id"):
+            out.append(t)
+            continue
+        core = json.dumps([t.get(k) for k in _TRIP_CORE], ensure_ascii=False)
+        n = seen[core] = seen.get(core, -1) + 1
+        out.append({**t, "id": hashlib.sha256(f"{core}#{n}".encode()).hexdigest()[:12]})
+    return out
+
+
+def stored_trip(data: dict, trip_id: str | None = None) -> dict:
+    """관리자 입력(AdminTripIn 모양) → 저장 trip."""
+    direction = _DIRECTION_BY_ID[data["direction"]]
+    parsed = ParsedTrip(
+        direction=direction,
+        day_type=data["day_type"],
+        day_note=data.get("day_note"),
+        departure_time=data["time"],
+        departure_time_end=data.get("end"),
+        valid_from=data.get("valid_from"),
+        valid_to=data.get("valid_to"),
+        period_note=data.get("period_note"),
+        boarding_place=data.get("boarding_place"),
+        note=data.get("note"),
+        kind=data.get("kind") or "fixed",
+    )
+    trip = ShuttleTrip(**parsed.model_dump(), **SHUTTLE_DIRECTIONS[direction])
+    return {**trip.model_dump(), "id": trip_id or os.urandom(6).hex()}
+
+
+def admin_trip(t: dict) -> dict:
+    """저장 trip → 관리자 응답(AdminTripOut 모양)."""
+    return {
+        "id": t["id"],
+        "direction": DIRECTION_IDS[t["direction"]],
+        "day_type": t["day_type"],
+        "kind": t.get("kind") or ("frequent" if t["departure_time_end"] else "fixed"),
+        "time": t["departure_time"],
+        "end": t["departure_time_end"],
+        "note": t.get("note"),
+        "day_note": t.get("day_note"),
+        "boarding_place": t.get("boarding_place"),
+        "valid_from": t.get("valid_from"),
+        "valid_to": t.get("valid_to"),
+        "period_note": t.get("period_note"),
+    }
+
+
+def admin_summary(doc: dict) -> dict:
+    """문서 → 관리자 목록 1건(연도 포함 유효기간, 검토 대기 요약)."""
+    rng = doc_range(doc, _today())
+    pending = doc.get("pending")
+    return {
+        "place": doc["place"],
+        "title": doc.get("title"),
+        "source": doc.get("source", "pdf"),
+        "valid_from": rng[0] if rng else None,
+        "valid_to": rng[1] if rng else None,
+        "trip_count": len(doc["trips"]),
+        "needs_review": needs_review(doc),
+        "problems": doc.get("problems", []),
+        "pending": {
+            "parsed_at": pending.get("parsed_at"),
+            "pdf_url": pending.get("pdf_url"),
+            "trip_count": len(pending["trips"]),
+            "problems": pending.get("problems", []),
+        }
+        if pending
+        else None,
+        "updated_at": doc.get("updated_at"),
+        "updated_by": doc.get("updated_by"),
+    }
+
+
+def admin_detail(doc: dict) -> dict:
+    """문서 → 관리자 상세(운행편 id 포함)."""
+    return {
+        **admin_summary(doc),
+        "pdf_url": doc.get("pdf_url"),
+        "parsed_at": doc.get("parsed_at"),
+        "notes": doc.get("notes", []),
+        "trips": [admin_trip(t) for t in with_trip_ids(doc["trips"])],
+    }
+
+
+async def create_timetable(data: dict, updated_by: str) -> dict | None:
+    """관리자가 새 문서를 만듭니다. 같은 place가 있으면 None.
+
+    유효기간(연도 포함)을 주면 그 시작일이 문서의 연도 기준일이 됩니다.
+    """
+    now = datetime.now(timezone.utc).isoformat()
+    vf, vt = data.get("valid_from"), data.get("valid_to")
+    doc = {
+        "place": data["place"],
+        "title": data.get("title"),
+        "pdf_url": None,
+        "pdf_sha256": None,
+        "parsed_at": None,
+        "ref_date": (vf or _today()).isoformat(),
+        "valid_from": vf.isoformat() if vf else None,
+        "valid_to": vt.isoformat() if vt else None,
+        "source": "user",
+        "updated_at": now,
+        "updated_by": updated_by,
+        "notes": data.get("notes") or [],
+        "trips": [stored_trip(t) for t in data.get("trips") or []],
+    }
+    async with _lock:
+        store = load_store()
+        if doc["place"] in store:
+            return None
+        store[doc["place"]] = doc
+        _save_store(store)
+    return doc
+
+
+async def edit_timetable(
+    place: str, change: Callable[[dict], None], updated_by: str
+) -> dict | None:
+    """문서를 고칩니다. 없으면 None. change가 ValueError·KeyError를 내면 저장하지 않습니다.
+
+    고친 문서는 사용자 수정본(source=user)이 되어 force 없는 동기화가 덮어쓰지 않고,
+    사람이 본 것이므로 첫 파싱 실패 표시(problems)도 지웁니다. PDF 문서의 연도
+    기준일은 그대로 이어받습니다. 검토 대기본(pending)은 승인·거부로만 처리합니다.
+    """
+    async with _lock:
+        store = load_store()
+        if place not in store:
+            return None
+        doc = {**store[place], "trips": with_trip_ids(store[place]["trips"])}
+        doc["ref_date"] = _ref_date(doc) or _today().isoformat()
+        change(doc)
+        doc.pop("problems", None)
+        doc.update(
+            source="user",
+            updated_at=datetime.now(timezone.utc).isoformat(),
+            updated_by=updated_by,
+        )
+        store[place] = doc
+        _save_store(store)
+    return doc
+
+
+async def review_timetable(place: str, approve: bool, updated_by: str) -> dict | None:
+    """검토 대기 파싱본을 승인(정상본으로 승격)하거나 거부합니다. 문서가 없으면 None.
+
+    - 승인: pending이 있으면 그것으로 교체, 첫 파싱 실패(problems)면 표시만 지웁니다.
+    - 거부: pending을 버리고 그 PDF 해시를 기억해 같은 PDF를 다시 파싱하지 않습니다.
+      problems만 있는 문서는 되돌릴 정상본이 없어 거부할 수 없습니다(수정·삭제).
+
+    Raises:
+        ValueError: 검토 대기가 없거나 거부할 수 없는 상태일 때.
+    """
+    async with _lock:
+        store = load_store()
+        doc = store.get(place)
+        if doc is None:
+            return None
+        pending = doc.get("pending")
+        if approve and pending:
+            doc = {k: v for k, v in pending.items() if k != "problems"}
+        elif approve and doc.get("problems"):
+            doc = {k: v for k, v in doc.items() if k != "problems"}
+        elif not approve and pending:
+            doc = {k: v for k, v in doc.items() if k != "pending"}
+            doc["rejected_sha256"] = pending.get("pdf_sha256")
+        elif doc.get("problems"):
+            raise ValueError("되돌릴 정상본이 없습니다. 운행편을 고치거나 삭제하세요.")
+        else:
+            raise ValueError("검토 대기 중인 파싱본이 없습니다.")
+        doc["reviewed_by"] = updated_by
+        store[place] = doc
+        _save_store(store)
+    return doc

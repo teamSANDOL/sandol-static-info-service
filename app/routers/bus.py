@@ -3,7 +3,8 @@
 - 이미지: GET /bus/images, GET /bus/image/{index} (iBook 뷰어 페이지 이미지)
 - 시간표: GET /bus/timetable, POST /bus/timetable/refresh,
           PUT/DELETE /bus/timetable/{place}
-- 쓰기(refresh/PUT/DELETE)는 Keycloak 관리자 Bearer 토큰이 필요합니다(require_admin).
+- 쓰기(refresh/PUT/DELETE)는 Keycloak Bearer 토큰과 셔틀 관리자 롤이 필요합니다
+  (require_shuttle_admin, SHUTTLE_ADMIN_ROLES). 세밀한 편집은 shuttle_admin 라우터.
 """
 
 import asyncio
@@ -25,10 +26,10 @@ from app.utils.shuttle_timetable import (
     save_user_timetable,
     sync_shuttle_timetables,
 )
-from app.utils.keycloak_auth import require_admin
+from app.utils.keycloak_auth import require_shuttle_admin
 
 KST = ZoneInfo("Asia/Seoul")
-Admin = Annotated[str, Depends(require_admin)]
+Admin = Annotated[str, Depends(require_shuttle_admin)]
 _background: set[asyncio.Task] = set()  # create_task 결과가 GC되지 않게 참조 보관
 
 _AUTH_RESPONSES: dict[int | str, dict] = {

@@ -33,13 +33,31 @@ def _client_allowed(payload: dict[str, Any]) -> bool:
 def require_admin(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
 ) -> str:
-    """Bearer 토큰을 검증하고 관리자 롤이 있으면 sub를 반환합니다.
+    """Bearer 토큰을 검증하고 관리자 롤(KC_ADMIN_ROLE)이 있으면 sub를 반환합니다.
 
     Keycloak 설정이 없으면 fail-closed로 모든 쓰기를 거부합니다.
 
     Raises:
         HTTPException: 미설정(503), 토큰 없음·무효(401), 롤 없음(403).
     """
+    return _require_roles(credentials, [Config.KC_ADMIN_ROLE])
+
+
+def require_shuttle_admin(
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
+) -> str:
+    """셔틀 시간표 쓰기용. SHUTTLE_ADMIN_ROLES 중 하나가 있으면 sub를 반환합니다.
+
+    Raises:
+        HTTPException: 미설정(503), 토큰 없음·무효(401), 롤 없음(403).
+    """
+    return _require_roles(credentials, Config.SHUTTLE_ADMIN_ROLES)
+
+
+def _require_roles(
+    credentials: HTTPAuthorizationCredentials | None, allowed: list[str]
+) -> str:
+    """토큰을 검증하고 realm 롤이 allowed 중 하나와 겹치면 sub를 반환합니다."""
     if not Config.KC_SERVER_URL:
         raise HTTPException(
             Config.HttpStatus.SERVICE_UNAVAILABLE,
@@ -84,6 +102,6 @@ def require_admin(
 
     realm_access = payload.get("realm_access")
     roles = realm_access.get("roles") if isinstance(realm_access, dict) else None
-    if not isinstance(roles, list) or Config.KC_ADMIN_ROLE not in roles:
+    if not isinstance(roles, list) or not set(allowed) & set(roles):
         raise HTTPException(Config.HttpStatus.FORBIDDEN, "관리자 권한이 필요합니다.")
     return str(payload["sub"])

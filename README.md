@@ -96,7 +96,7 @@ trip 1건의 필드: `route`, `direction`, `origin`, `destination`, `via[]`, `da
 
 ## 주요 API
 
-셔틀 시간표 쓰기(PUT/DELETE/refresh)와 TUK World 쓰기는 `Authorization: Bearer <Keycloak access token>`이 필요합니다. 토큰은 JWKS로 서명을 검증하고 realm 롤 `KC_ADMIN_ROLE`(기본 `global_admin`)을 확인합니다. `KC_SERVER_URL`이 비어 있으면 쓰기는 모두 거부됩니다(503). 토큰이 없거나 무효면 401, 롤이 없으면 403입니다.
+셔틀 시간표 쓰기(관리자 API, PUT/DELETE/refresh)와 TUK World 쓰기는 `Authorization: Bearer <Keycloak access token>`이 필요합니다. 토큰은 JWKS로 서명을 검증하고, 셔틀 쓰기는 realm 롤 `SHUTTLE_ADMIN_ROLES`(쉼표 구분, 기본 `global_admin,shuttle_admin`) 중 하나, 그 밖의 쓰기는 `KC_ADMIN_ROLE`(기본 `global_admin`)을 확인합니다. `KC_SERVER_URL`이 비어 있으면 쓰기는 모두 거부됩니다(503). 토큰이 없거나 무효면 401, 롤이 없으면 403입니다.
 
 `main.py`에서 `root_path=/static-info`를 사용하므로, compose 기준 모든 엔드포인트는 `/static-info` 하위로 접근합니다.
 
@@ -109,6 +109,14 @@ trip 1건의 필드: `route`, `direction`, `origin`, `destination`, `via[]`, `da
 - `POST /static-info/bus/timetable/refresh` (관리자 Bearer) — iBook 원본 PDF를 백그라운드에서 동기화(변경 시에만 재파싱), 즉시 202 반환. 쿼리 `force=true`면 사용자 수정본과 해시 가드를 모두 무시하고 강제 재파싱. 기동 시 자동 동기화되므로 최초 적재용 수동 호출은 불필요, 결과는 잠시 후 `GET /bus/timetable`로 확인
 - `PUT /static-info/bus/timetable/{place}` (관리자 Bearer) — place의 시간표를 사용자가 직접 입력해 저장 (body `{"title": "...", "trips": [...], "notes": [...]}`, `title`은 보낸 값으로 저장되며 생략하면 null, `notes`는 생략하면 기존 안내문 유지, trip의 `kind`는 생략 가능). 이후 cron/refresh가 덮어쓰지 않음
 - `DELETE /static-info/bus/timetable/{place}` (관리자 Bearer) — 사용자 수정본을 삭제해 다시 PDF 파싱 대상으로 되돌림
+- 셔틀 관리자 API `/static-info/bus/admin/timetables` (셔틀 관리자 Bearer, 요청·응답 스키마는 OpenAPI `셔틀 시간표 관리자` 태그). 모든 쓰기는 `admin_audit` 감사 로그를 남기고 저장 즉시 공개 `GET /bus/timetable`과 `version`에 반영됩니다. 문서·운행편을 고치면 사용자 수정본(`source: "user"`)이 되어 force 없는 동기화가 덮어쓰지 않으며, PDF 문서의 연도 기준일은 그대로 유지됩니다
+  - `GET` — 문서 목록(place·제목·출처·연도 포함 유효기간·편수·검토 대기 여부와 요약)
+  - `POST` — 문서 생성 `{"place","title","valid_from":"YYYY-MM-DD","valid_to":"YYYY-MM-DD","notes":[],"trips":[...]}` (유효기간을 둘 다 비우면 상시, 같은 place면 409)
+  - `GET /{place}` — 문서 상세(운행편마다 안정 `id`)
+  - `PATCH /{place}` — 제목·유효기간(둘을 함께)·안내문 수정
+  - `DELETE /{place}` — 문서 삭제
+  - `POST /{place}/trips`, `PUT /{place}/trips/{id}`, `DELETE /{place}/trips/{id}` — 운행편 추가·수정·삭제. 운행편은 `{"direction": "main_out|main_in|campus2_out|campus2_in|campus2_from_station|campus2_to_station", "day_type": "평일|토요일|일요일|주말|공휴일", "kind": "fixed|frequent|arrival_board", "time": "HH:MM", "end": "HH:MM|null", "note", "day_note", "boarding_place", "valid_from"/"valid_to"(MM-DD, 보통 비움), "period_note"}`이며, fixed는 `end` 없음, 구간은 `time < end`. 형식이 틀리면 422
+  - `POST /{place}/review/approve` — 검토 대기 파싱본을 정상본으로 승격(첫 파싱 실패 표시면 표시만 해제), `POST /{place}/review/reject` — 검토 대기본을 버리고 같은 PDF는 다시 파싱하지 않음. 검토 대기가 없으면 409
 - `GET /static-info/organization/tree`
 - `GET /static-info/organization/search/{name}`
 - `GET /static-info/organization/{path}/children`

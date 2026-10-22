@@ -64,6 +64,15 @@ class Config:
     )
     KC_REALM: str = os.getenv("KC_REALM", "Sandori")
     KC_ADMIN_ROLE: str = os.getenv("KC_ADMIN_ROLE", "global_admin")
+    # 셔틀 시간표 쓰기 API만 허용하는 realm 롤(쉼표 구분). 다른 관리자 경로는
+    # KC_ADMIN_ROLE 하나만 본다.
+    SHUTTLE_ADMIN_ROLES: list[str] = [
+        r.strip()
+        for r in os.getenv("SHUTTLE_ADMIN_ROLES", "global_admin,shuttle_admin").split(
+            ","
+        )
+        if r.strip()
+    ]
     KC_JWKS_URL: str = os.getenv("KC_JWKS_URL", "")
     # 쉼표 구분 허용 클라이언트. 비어 있으면 azp/aud를 검사하지 않는다.
     KC_ALLOWED_CLIENTS: list[str] = [
