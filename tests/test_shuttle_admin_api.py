@@ -12,6 +12,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi.testclient import TestClient
 
 from app.config import Config
+from app.routers import bus
 from app.utils import keycloak_auth
 from app.utils import shuttle_timetable as st
 from main import app
@@ -300,3 +301,92 @@ def test_editing_pdf_doc_becomes_user_and_keeps_year(
     assert _public()["source"]["origin"] == "user"
     # 수정본은 force 없는 동기화가 덮어쓰지 않음
     assert _ingest(monkeypatch, b"%PDF v3") is None
+
+
+def test_approve_after_edit_needs_force(monkeypatch: pytest.MonkeyPatch) -> None:
+    """검토 대기 중 고친 내용이 승인으로 조용히 사라지지 않아야 합니다."""
+    _ingest(monkeypatch, PDF.read_bytes())
+    _ingest(monkeypatch, b"%PDF v2", _broken_parse(monkeypatch))
+    add = api.post(
+        f"{BASE}/{PDF_PLACE}/trips",
+        json={"direction": "main_in", "day_type": "평일", "time": "07:00"},
+        headers=ADMIN,
+    )
+    assert add.status_code == 201
+    res = api.post(f"{BASE}/{PDF_PLACE}/review/approve", headers=ADMIN)
+    assert res.status_code == 409 and "force=true" in res.json()["detail"]
+    assert {"type": "fixed", "time": "07:00", "note": None} in _main_in(_public())
+    forced = api.post(
+        f"{BASE}/{PDF_PLACE}/review/approve", params={"force": "true"}, headers=ADMIN
+    )
+    assert forced.status_code == 200 and forced.json()["source"] == "pdf"
+
+
+@pytest.mark.parametrize("place", ["a/b", "a\nb", "a\x00", "x" * 101, "a\b"])
+def test_place_rejected_422(place: str) -> None:
+    res = api.post(BASE, json={**BODY, "place": place}, headers=ADMIN)
+    assert res.status_code == 422
+
+
+def test_audit_log_escapes_target(caplog: pytest.LogCaptureFixture) -> None:
+    place = 'x" action=forged'
+    assert (
+        api.post(BASE, json={**BODY, "place": place}, headers=ADMIN).status_code == 201
+    )
+    line = next(
+        r.getMessage()
+        for r in caplog.records
+        if "shuttle_admin.create" in r.getMessage()
+    )
+    assert line.endswith('target="x\\" action=forged"')
+
+
+def test_if_match_conflict_412() -> None:
+    created = api.post(BASE, json=BODY, headers=ADMIN).json()
+    rev = created["revision"]
+    trip_id = created["trips"][0]["id"]
+    ok = api.patch(
+        f"{BASE}/{PLACE}",
+        json={"title": "1"},
+        headers={**ADMIN, "If-Match": f'"{rev}"'},
+    )
+    assert ok.status_code == 200 and ok.json()["revision"] != rev
+    stale = api.patch(
+        f"{BASE}/{PLACE}",
+        json={"title": "2"},
+        headers={**ADMIN, "If-Match": f'"{rev}"'},
+    )
+    assert stale.status_code == 412
+    put = api.put(
+        f"{BASE}/{PLACE}/trips/{trip_id}",
+        json=TRIP,
+        headers={**ADMIN, "If-Match": rev},
+    )
+    assert put.status_code == 412
+    # 헤더가 없으면 지금처럼 바로 저장
+    assert (
+        api.patch(f"{BASE}/{PLACE}", json={"title": "3"}, headers=ADMIN).status_code
+        == 200
+    )
+    assert api.get(f"{BASE}/{PLACE}", headers=ADMIN).json()["title"] == "3"
+
+
+def test_force_refresh_requires_global_admin(monkeypatch: pytest.MonkeyPatch) -> None:
+    sync = AsyncMock(return_value=[])
+    monkeypatch.setattr(bus, "sync_shuttle_timetables", sync)
+    refresh = "/bus/timetable/refresh"
+    assert api.post(refresh, params={"force": "true"}, headers=ADMIN).status_code == 403
+    assert api.post(refresh, headers=ADMIN).status_code == 202
+    sync.assert_called_once_with(False)
+    gadmin = _auth(["global_admin"])
+    assert (
+        api.post(refresh, params={"force": "true"}, headers=gadmin).status_code == 202
+    )
+
+
+def test_auto_update_flag(monkeypatch: pytest.MonkeyPatch) -> None:
+    _ingest(monkeypatch, PDF.read_bytes())
+    assert api.get(f"{BASE}/{PDF_PLACE}", headers=ADMIN).json()["auto_update"] is True
+    api.patch(f"{BASE}/{PDF_PLACE}", json={"title": "고침"}, headers=ADMIN)
+    listed = api.get(BASE, headers=ADMIN).json()[0]
+    assert listed["auto_update"] is False and listed["source"] == "user"

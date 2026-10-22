@@ -40,7 +40,7 @@ def require_admin(
     Raises:
         HTTPException: 미설정(503), 토큰 없음·무효(401), 롤 없음(403).
     """
-    return _require_roles(credentials, [Config.KC_ADMIN_ROLE])
+    return _require_roles(credentials, [Config.KC_ADMIN_ROLE])[0]
 
 
 def require_shuttle_admin(
@@ -51,13 +51,23 @@ def require_shuttle_admin(
     Raises:
         HTTPException: 미설정(503), 토큰 없음·무효(401), 롤 없음(403).
     """
+    return _require_roles(credentials, Config.SHUTTLE_ADMIN_ROLES)[0]
+
+
+def shuttle_admin_identity(
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
+) -> tuple[str, list[str]]:
+    """require_shuttle_admin과 같되 (sub, realm 롤 목록)을 반환합니다.
+
+    롤에 따라 일부 옵션(예: 수정본을 덮어쓰는 force 동기화)을 더 막을 때 씁니다.
+    """
     return _require_roles(credentials, Config.SHUTTLE_ADMIN_ROLES)
 
 
 def _require_roles(
     credentials: HTTPAuthorizationCredentials | None, allowed: list[str]
-) -> str:
-    """토큰을 검증하고 realm 롤이 allowed 중 하나와 겹치면 sub를 반환합니다."""
+) -> tuple[str, list[str]]:
+    """토큰을 검증하고 realm 롤이 allowed 중 하나와 겹치면 (sub, 롤 목록)을 반환합니다."""
     if not Config.KC_SERVER_URL:
         raise HTTPException(
             Config.HttpStatus.SERVICE_UNAVAILABLE,
@@ -104,4 +114,4 @@ def _require_roles(
     roles = realm_access.get("roles") if isinstance(realm_access, dict) else None
     if not isinstance(roles, list) or not set(allowed) & set(roles):
         raise HTTPException(Config.HttpStatus.FORBIDDEN, "관리자 권한이 필요합니다.")
-    return str(payload["sub"])
+    return str(payload["sub"]), [str(r) for r in roles]

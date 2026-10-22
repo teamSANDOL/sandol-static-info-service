@@ -6,10 +6,11 @@
 바뀐 내용은 저장 즉시 공개 GET /bus/timetable 에 반영되고 version도 바뀝니다.
 """
 
+import json
 from collections.abc import Callable
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, Header, HTTPException, Response
 
 from app.config import Config, logger
 from app.schemas.shuttle import (
@@ -29,11 +30,16 @@ from app.utils.shuttle_timetable import (
     delete_timetable,
     edit_timetable,
     load_store,
+    RevisionConflictError,
     review_timetable,
     stored_trip,
 )
 
 ShuttleAdmin = Annotated[str, Depends(require_shuttle_admin)]
+IfMatch = Annotated[
+    str | None,
+    Header(description="문서 revision. 다르면 412(다른 사람이 먼저 고침), 생략 가능"),
+]
 _NOT_FOUND = {"description": "해당 place 문서(또는 운행편)가 없습니다."}
 _AUTH = {
     401: {"description": "Bearer 토큰이 없거나 유효하지 않습니다."},
@@ -47,7 +53,14 @@ router = APIRouter(
 
 
 def _audit(sub: str, action: str, target: str) -> None:
-    logger.info("admin_audit sub=%s action=%s target=%s", sub, action, target)
+    # target엔 place 등 사용자 입력이 섞여 줄바꿈·따옴표를 이스케이프해 로그 위조를 막는다
+    # (sub는 서명 검증된 토큰 값).
+    logger.info(
+        "admin_audit sub=%s action=%s target=%s",
+        sub,
+        action,
+        json.dumps(target, ensure_ascii=False),
+    )
 
 
 def _missing(what: str = "문서") -> HTTPException:
@@ -92,7 +105,9 @@ async def get_detail(place: str, sub: ShuttleAdmin) -> dict:
     response_model=AdminTimetableDetail,
     responses={404: _NOT_FOUND, 422: {"description": "유효기간이 맞지 않습니다."}},
 )
-async def patch_meta(place: str, body: AdminTimetablePatch, sub: ShuttleAdmin) -> dict:
+async def patch_meta(
+    place: str, body: AdminTimetablePatch, sub: ShuttleAdmin, if_match: IfMatch = None
+) -> dict:
     """제목·유효기간·안내문을 고칩니다. 보낸 필드만 바뀝니다."""
     fields = body.model_dump(exclude_unset=True)
     if ("valid_from" in fields) != ("valid_to" in fields):
@@ -116,7 +131,7 @@ async def patch_meta(place: str, body: AdminTimetablePatch, sub: ShuttleAdmin) -
             if vf:
                 doc["ref_date"] = vf.isoformat()
 
-    doc = await edit_timetable(place, change, sub)
+    doc = await _edit(place, change, sub, if_match)
     if doc is None:
         raise _missing()
     _audit(sub, "shuttle_admin.patch", f"{place} fields={sorted(fields)}")
@@ -165,9 +180,25 @@ def _replace(trip_id: str, new: dict | None) -> Callable[[dict], None]:
     return change
 
 
-async def _edit_trip(place: str, trip_id: str, new: dict | None, sub: str) -> None:
+async def _edit(
+    place: str, change: Callable[[dict], None], sub: str, if_match: str | None
+) -> dict | None:
+    """edit_timetable + If-Match(수정 버전) 충돌을 412로."""
+    tag = if_match.strip().removeprefix("W/").strip('"') if if_match else None
     try:
-        doc = await edit_timetable(place, _replace(trip_id, new), sub)
+        return await edit_timetable(place, change, sub, if_match=tag)
+    except RevisionConflictError as exc:
+        raise HTTPException(
+            Config.HttpStatus.PRECONDITION_FAILED,
+            "다른 사람이 먼저 고쳤습니다. 상세를 다시 읽고 revision을 확인하세요.",
+        ) from exc
+
+
+async def _edit_trip(
+    place: str, trip_id: str, new: dict | None, sub: str, if_match: str | None = None
+) -> None:
+    try:
+        doc = await _edit(place, _replace(trip_id, new), sub, if_match)
     except KeyError as exc:
         raise _missing("운행편") from exc
     if doc is None:
@@ -178,11 +209,15 @@ async def _edit_trip(place: str, trip_id: str, new: dict | None, sub: str) -> No
     "/{place}/trips/{trip_id}", response_model=AdminTripOut, responses={404: _NOT_FOUND}
 )
 async def update_trip(
-    place: str, trip_id: str, body: AdminTripIn, sub: ShuttleAdmin
+    place: str,
+    trip_id: str,
+    body: AdminTripIn,
+    sub: ShuttleAdmin,
+    if_match: IfMatch = None,
 ) -> dict:
     """운행편 하나를 통째로 바꿉니다. id는 그대로입니다."""
     trip = stored_trip(body.model_dump(), trip_id)
-    await _edit_trip(place, trip_id, trip, sub)
+    await _edit_trip(place, trip_id, trip, sub, if_match)
     _audit(sub, "shuttle_admin.trip_update", f"{place} id={trip_id}")
     return admin_trip(trip)
 
@@ -199,9 +234,9 @@ async def delete_trip(place: str, trip_id: str, sub: ShuttleAdmin) -> Response:
     return Response(status_code=Config.HttpStatus.NO_CONTENT)
 
 
-async def _review(place: str, approve: bool, sub: str) -> dict:
+async def _review(place: str, approve: bool, sub: str, force: bool = False) -> dict:
     try:
-        doc = await review_timetable(place, approve, sub)
+        doc = await review_timetable(place, approve, sub, force)
     except ValueError as exc:
         raise HTTPException(Config.HttpStatus.CONFLICT, str(exc)) from exc
     if doc is None:
@@ -218,9 +253,13 @@ _REVIEW_RESPONSES = {404: _NOT_FOUND, 409: {"description": "검토 대기가 없
     response_model=AdminTimetableDetail,
     responses=_REVIEW_RESPONSES,
 )
-async def approve(place: str, sub: ShuttleAdmin) -> dict:
-    """검토 대기 파싱본을 정상본으로 승격합니다(needs_review 해제)."""
-    return await _review(place, True, sub)
+async def approve(place: str, sub: ShuttleAdmin, force: bool = False) -> dict:
+    """검토 대기 파싱본을 정상본으로 승격합니다(needs_review 해제).
+
+    검토 대기본이 생긴 뒤 문서를 고쳤다면 수정 내용이 사라지므로 409이며,
+    force=true일 때만 파싱본으로 덮어씁니다.
+    """
+    return await _review(place, True, sub, force)
 
 
 @router.post(

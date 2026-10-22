@@ -206,7 +206,12 @@ class AdminTimetableMeta(BaseModel):
 class AdminTimetableCreate(AdminTimetableMeta):
     """새 문서. place는 문서 키(중복 불가)."""
 
-    place: str = Field(min_length=1, max_length=200)
+    place: str = Field(
+        min_length=1,
+        max_length=100,
+        pattern=r"^[^/\\\x00-\x1f\x7f]+$",
+        description="문서 키. '/'·'\\'·줄바꿈 등 제어문자 불가, 100자 이내",
+    )
     trips: list[AdminTripIn] = Field(default_factory=list)
 
 
@@ -244,6 +249,15 @@ class AdminTimetableSummary(BaseModel):
     pending: AdminPending | None
     updated_at: str | None
     updated_by: str | None
+    auto_update: bool = Field(
+        description=(
+            "PDF 자동 갱신 대상인지. false면 관리자 수정본(source=user)이라 "
+            "force 없는 동기화가 이 문서를 더는 갱신하지 않습니다."
+        )
+    )
+    revision: str = Field(
+        description="수정 버전. PATCH·운행편 PUT에 If-Match로 보내면 충돌 시 412"
+    )
 
 
 class AdminTimetableDetail(AdminTimetableSummary):

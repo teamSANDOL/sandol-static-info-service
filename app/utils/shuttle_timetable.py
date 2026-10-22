@@ -648,7 +648,19 @@ def admin_summary(doc: dict) -> dict:
         else None,
         "updated_at": doc.get("updated_at"),
         "updated_by": doc.get("updated_by"),
+        "auto_update": doc.get("source") != "user",
+        "revision": doc_revision(doc),
     }
+
+
+def doc_revision(doc: dict) -> str:
+    """저장 문서의 수정 버전(If-Match 비교용). 문서가 바뀌면 바뀝니다."""
+    raw = json.dumps(doc, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(raw.encode()).hexdigest()[:16]
+
+
+class RevisionConflictError(Exception):
+    """If-Match로 받은 수정 버전이 저장 문서와 다릅니다(다른 사람이 먼저 고침)."""
 
 
 def admin_detail(doc: dict) -> dict:
@@ -698,9 +710,14 @@ async def create_timetable(data: dict, updated_by: str) -> dict | None:
 
 
 async def edit_timetable(
-    place: str, change: Callable[[dict], None], updated_by: str
+    place: str,
+    change: Callable[[dict], None],
+    updated_by: str,
+    if_match: str | None = None,
 ) -> dict | None:
     """문서를 고칩니다. 없으면 None. change가 ValueError·KeyError를 내면 저장하지 않습니다.
+
+    if_match(수정 버전)를 주면 저장 문서와 다를 때 RevisionConflictError를 냅니다.
 
     고친 문서는 사용자 수정본(source=user)이 되어 force 없는 동기화가 덮어쓰지 않고,
     사람이 본 것이므로 첫 파싱 실패 표시(problems)도 지웁니다. PDF 문서의 연도
@@ -710,6 +727,8 @@ async def edit_timetable(
         store = load_store()
         if place not in store:
             return None
+        if if_match is not None and if_match != doc_revision(store[place]):
+            raise RevisionConflictError(place)
         doc = {**store[place], "trips": with_trip_ids(store[place]["trips"])}
         doc["ref_date"] = _ref_date(doc) or _today().isoformat()
         change(doc)
@@ -724,10 +743,14 @@ async def edit_timetable(
     return doc
 
 
-async def review_timetable(place: str, approve: bool, updated_by: str) -> dict | None:
+async def review_timetable(
+    place: str, approve: bool, updated_by: str, force: bool = False
+) -> dict | None:
     """검토 대기 파싱본을 승인(정상본으로 승격)하거나 거부합니다. 문서가 없으면 None.
 
     - 승인: pending이 있으면 그것으로 교체, 첫 파싱 실패(problems)면 표시만 지웁니다.
+      검토 대기본이 생긴 뒤 관리자가 문서를 고쳤다면(source=user) 그 수정이 조용히
+      사라지지 않게 force일 때만 덮어씁니다.
     - 거부: pending을 버리고 그 PDF 해시를 기억해 같은 PDF를 다시 파싱하지 않습니다.
       problems만 있는 문서는 되돌릴 정상본이 없어 거부할 수 없습니다(수정·삭제).
 
@@ -740,6 +763,11 @@ async def review_timetable(place: str, approve: bool, updated_by: str) -> dict |
         if doc is None:
             return None
         pending = doc.get("pending")
+        if approve and pending and doc.get("source") == "user" and not force:
+            raise ValueError(
+                "검토 대기본이 생긴 뒤 문서가 수정됐습니다. 승인하면 수정 내용이 "
+                "파싱본으로 덮어써지므로 의도했다면 force=true로 다시 요청하세요."
+            )
         if approve and pending:
             doc = {k: v for k, v in pending.items() if k != "problems"}
         elif approve and doc.get("problems"):

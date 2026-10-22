@@ -9,6 +9,7 @@
 
 import asyncio
 import datetime
+import json
 from typing import Annotated
 from zoneinfo import ZoneInfo
 
@@ -26,7 +27,7 @@ from app.utils.shuttle_timetable import (
     save_user_timetable,
     sync_shuttle_timetables,
 )
-from app.utils.keycloak_auth import require_shuttle_admin
+from app.utils.keycloak_auth import require_shuttle_admin, shuttle_admin_identity
 
 KST = ZoneInfo("Asia/Seoul")
 Admin = Annotated[str, Depends(require_shuttle_admin)]
@@ -41,7 +42,14 @@ _AUTH_RESPONSES: dict[int | str, dict] = {
 
 def _audit(sub: str, action: str, target: str) -> None:
     """관리자 화면의 log_admin_action과 같은 형식의 감사 로그(Bearer 경로용)."""
-    logger.info("admin_audit sub=%s action=%s target=%s", sub, action, target)
+    # target엔 place 등 사용자 입력이 섞여 줄바꿈·따옴표를 이스케이프해 로그 위조를 막는다
+    # (sub는 서명 검증된 토큰 값).
+    logger.info(
+        "admin_audit sub=%s action=%s target=%s",
+        sub,
+        action,
+        json.dumps(target, ensure_ascii=False),
+    )
 
 
 router = create_ibook_image_router("/bus", Config.SHUTTLE_URL, "버스")
@@ -171,13 +179,23 @@ def _etag_matches(if_none_match: str | None, version: str) -> bool:
         **_AUTH_RESPONSES,
     },
 )
-async def refresh_shuttle_timetable(sub: Admin, force: bool = False):
+async def refresh_shuttle_timetable(
+    identity: Annotated[tuple[str, list[str]], Depends(shuttle_admin_identity)],
+    force: bool = False,
+):
     """수동으로 셔틀 시간표 동기화를 트리거합니다. 평소엔 6시간 cron이 대신합니다.
 
     PDF 파싱은 빠르지만 다운로드가 느릴 수 있어 백그라운드로 돌립니다.
     force=True면 사용자 수정본과 PDF 해시 가드를 모두 무시하고 재파싱합니다
     (사용자 수정본을 덮어쓰는 유일한 경로이며, 명시적으로 호출했을 때만 동작).
     """
+    sub, roles = identity
+    if force and Config.KC_ADMIN_ROLE not in roles:
+        # 수정본까지 덮어쓰는 force는 전체 관리자만. 셔틀 관리자는 일반 갱신만 한다.
+        raise HTTPException(
+            Config.HttpStatus.FORBIDDEN,
+            "force 동기화(수정본 덮어쓰기)는 전체 관리자만 할 수 있습니다.",
+        )
     _audit(sub, "shuttle_refresh", f"force={force}")
     task = asyncio.create_task(sync_shuttle_timetables(force))
     _background.add(task)
