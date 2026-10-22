@@ -109,14 +109,14 @@ trip 1건의 필드: `route`, `direction`, `origin`, `destination`, `via[]`, `da
 - `POST /static-info/bus/timetable/refresh` (관리자 Bearer) — iBook 원본 PDF를 백그라운드에서 동기화(변경 시에만 재파싱), 즉시 202 반환. 쿼리 `force=true`면 사용자 수정본과 해시 가드를 모두 무시하고 강제 재파싱(`KC_ADMIN_ROLE` 전체 관리자만, 셔틀 관리자는 403). 기동 시 자동 동기화되므로 최초 적재용 수동 호출은 불필요, 결과는 잠시 후 `GET /bus/timetable`로 확인
 - `PUT /static-info/bus/timetable/{place}` (관리자 Bearer) — place의 시간표를 사용자가 직접 입력해 저장 (body `{"title": "...", "trips": [...], "notes": [...]}`, `title`은 보낸 값으로 저장되며 생략하면 null, `notes`는 생략하면 기존 안내문 유지, trip의 `kind`는 생략 가능). 이후 cron/refresh가 덮어쓰지 않음
 - `DELETE /static-info/bus/timetable/{place}` (관리자 Bearer) — 사용자 수정본을 삭제해 다시 PDF 파싱 대상으로 되돌림
-- 셔틀 관리자 API `/static-info/bus/admin/timetables` (셔틀 관리자 Bearer, 요청·응답 스키마는 OpenAPI `셔틀 시간표 관리자` 태그). 모든 쓰기는 `admin_audit` 감사 로그를 남기고 저장 즉시 공개 `GET /bus/timetable`과 `version`에 반영됩니다. 문서·운행편을 고치면 사용자 수정본(`source: "user"`)이 되어 force 없는 동기화가 더는 이 문서를 갱신하지 않고(목록·상세의 `auto_update: false`로 표시), 첫 파싱 실패 표시(`problems`)도 지워지며, PDF 문서의 연도 기준일은 그대로 유지됩니다. 목록·상세의 `revision`을 `PATCH`·운행편 `PUT`에 `If-Match`로 보내면 그사이 다른 사람이 고친 경우 412(헤더 생략 가능). place는 `/`·`\`·제어문자 없이 100자 이내(422). 감사 로그의 대상 값은 따옴표·줄바꿈을 이스케이프합니다
+- 셔틀 관리자 API `/static-info/bus/admin/timetables` (셔틀 관리자 Bearer, 요청·응답 스키마는 OpenAPI `셔틀 시간표 관리자` 태그). 모든 쓰기는 `admin_audit` 감사 로그를 남기고 저장 즉시 공개 `GET /bus/timetable`과 `version`에 반영됩니다. 문서·운행편을 고치면 사용자 수정본(`source: "user"`)이 되어 force 없는 동기화가 더는 이 문서를 갱신하지 않고(목록·상세의 `auto_update: false`로 표시), 첫 파싱 실패 표시(`problems`)도 지워지며, PDF 문서의 연도 기준일은 그대로 유지됩니다. 목록·상세의 `revision`을 문서 `PATCH`·`DELETE`, 운행편 `POST`·`PUT`·`DELETE`에 `If-Match`로 보내면 그사이 다른 사람이 고친 경우 412(헤더 생략 가능, `If-Match: *`는 존재만 확인). 관리자 상세는 운행편을 원시값 그대로 보여 주고 입력 규칙에 어긋나는 옛 편엔 `problems`를 적으므로 그 편도 `PUT`·`DELETE`로 고칠 수 있습니다(공개 GET에서만 건너뜀). **주의**: 유효기간 없이 만든 관리자 문서는 상시라 매일 유효하고 관리자 문서가 우선하므로, 해가 바뀌어도 새 PDF 문서를 계속 가립니다(목록·상세의 `always_active: true`). 학기 문서는 유효기간을 넣으세요. place는 `/`·`\`·제어문자 없이 100자 이내(422). 감사 로그의 대상 값은 따옴표·줄바꿈을 이스케이프합니다
   - `GET` — 문서 목록(place·제목·출처·연도 포함 유효기간·편수·검토 대기 여부와 요약)
   - `POST` — 문서 생성 `{"place","title","valid_from":"YYYY-MM-DD","valid_to":"YYYY-MM-DD","notes":[],"trips":[...]}` (유효기간을 둘 다 비우면 상시, 같은 place면 409)
   - `GET /{place}` — 문서 상세(운행편마다 안정 `id`)
   - `PATCH /{place}` — 제목·유효기간(둘을 함께)·안내문 수정
   - `DELETE /{place}` — 문서 삭제
   - `POST /{place}/trips`, `PUT /{place}/trips/{id}`, `DELETE /{place}/trips/{id}` — 운행편 추가·수정·삭제. 운행편은 `{"direction": "main_out|main_in|campus2_out|campus2_in|campus2_from_station|campus2_to_station", "day_type": "평일|토요일|일요일|주말|공휴일", "kind": "fixed|frequent|arrival_board", "time": "HH:MM", "end": "HH:MM|null", "note", "day_note", "boarding_place", "valid_from"/"valid_to"(MM-DD, 보통 비움), "period_note"}`이며, fixed는 `end` 없음, 구간은 `time < end`. 형식이 틀리면 422
-  - `POST /{place}/review/approve` — 검토 대기 파싱본을 정상본으로 승격(첫 파싱 실패 표시면 표시만 해제). 검토 대기본이 생긴 뒤 문서를 고쳤다면 수정이 사라지므로 409이고 `?force=true`일 때만 덮어씀, `POST /{place}/review/reject` — 검토 대기본을 버리고 같은 PDF는 다시 파싱하지 않음. 검토 대기가 없으면 409
+  - `POST /{place}/review/approve` — 검토 대기 파싱본을 정상본으로 승격(첫 파싱 실패 표시면 표시만 해제). 검토 대기본이 생긴 뒤 문서를 고쳤다면 수정이 사라지므로 409이고 `?force=true`일 때만 덮어씀(force는 `KC_ADMIN_ROLE` 전체 관리자만), `POST /{place}/review/reject` — 검토 대기본을 버리고 같은 PDF는 다시 파싱하지 않음. 검토 대기가 없으면 409
 - `GET /static-info/organization/tree`
 - `GET /static-info/organization/search/{name}`
 - `GET /static-info/organization/{path}/children`

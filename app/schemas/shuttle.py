@@ -175,12 +175,29 @@ class AdminTripIn(BaseModel):
         return self
 
 
-class AdminTripOut(AdminTripIn):
-    """저장된 운행편. id는 문서 안에서 안정적이며 수정·삭제에 씁니다."""
+class AdminTripOut(BaseModel):
+    """저장된 운행편(원시값 그대로). id는 문서 안에서 안정적이며 수정·삭제에 씁니다.
 
-    model_config = ConfigDict(extra="ignore")
+    응답은 검증하지 않습니다. 옛 저장값이 입력 규칙(AdminTripIn)에 어긋나면 값을
+    그대로 보여 주고 problems에 이유를 적어, 관리자가 PUT으로 고치거나 지울 수 있게
+    합니다. 그런 편은 공개 GET에서만 건너뜁니다.
+    """
 
     id: str
+    direction: str | None = Field(description="방향 계약 코드(모르는 값이면 원문)")
+    day_type: str | None
+    kind: str | None
+    time: str | None
+    end: str | None
+    note: str | None = None
+    day_note: str | None = None
+    boarding_place: str | None = None
+    valid_from: str | None = None
+    valid_to: str | None = None
+    period_note: str | None = None
+    problems: list[str] = Field(
+        default_factory=list, description="입력 규칙에 어긋나는 점. 비어 있으면 정상"
+    )
 
 
 class AdminTimetableMeta(BaseModel):
@@ -249,6 +266,12 @@ class AdminTimetableSummary(BaseModel):
     pending: AdminPending | None
     updated_at: str | None
     updated_by: str | None
+    always_active: bool = Field(
+        description=(
+            "기간 없는 관리자 문서라 매일 유효한지. true면 해가 바뀌어도 새 PDF 문서를 "
+            "계속 가리므로 유효기간을 넣거나 지워야 합니다."
+        )
+    )
     auto_update: bool = Field(
         description=(
             "PDF 자동 갱신 대상인지. false면 관리자 수정본(source=user)이라 "

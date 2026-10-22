@@ -21,7 +21,7 @@ from app.schemas.shuttle import (
     AdminTripIn,
     AdminTripOut,
 )
-from app.utils.keycloak_auth import require_shuttle_admin
+from app.utils.keycloak_auth import require_shuttle_admin, shuttle_admin_identity
 from app.utils.shuttle_timetable import (
     admin_detail,
     admin_summary,
@@ -141,9 +141,18 @@ async def patch_meta(
 @router.delete(
     "/{place}", status_code=Config.HttpStatus.NO_CONTENT, responses={404: _NOT_FOUND}
 )
-async def delete_doc(place: str, sub: ShuttleAdmin) -> Response:
+async def delete_doc(
+    place: str, sub: ShuttleAdmin, if_match: IfMatch = None
+) -> Response:
     """문서를 지웁니다. PDF 문서였다면 다음 동기화 때 다시 파싱됩니다."""
-    if not await delete_timetable(place):
+    try:
+        deleted = await delete_timetable(place, if_match=_tag(if_match))
+    except RevisionConflictError as exc:
+        raise HTTPException(
+            Config.HttpStatus.PRECONDITION_FAILED,
+            "다른 사람이 먼저 고쳤습니다. 상세를 다시 읽고 revision을 확인하세요.",
+        ) from exc
+    if not deleted:
         raise _missing()
     _audit(sub, "shuttle_admin.delete", place)
     return Response(status_code=Config.HttpStatus.NO_CONTENT)
@@ -155,10 +164,12 @@ async def delete_doc(place: str, sub: ShuttleAdmin) -> Response:
     response_model=AdminTripOut,
     responses={404: _NOT_FOUND},
 )
-async def add_trip(place: str, body: AdminTripIn, sub: ShuttleAdmin) -> dict:
+async def add_trip(
+    place: str, body: AdminTripIn, sub: ShuttleAdmin, if_match: IfMatch = None
+) -> dict:
     """운행편을 추가합니다. PDF 문서면 사용자 수정본이 됩니다."""
     trip = stored_trip(body.model_dump())
-    doc = await edit_timetable(place, lambda d: d["trips"].append(trip), sub)
+    doc = await _edit(place, lambda d: d["trips"].append(trip), sub, if_match)
     if doc is None:
         raise _missing()
     _audit(sub, "shuttle_admin.trip_add", f"{place} id={trip['id']}")
@@ -180,13 +191,18 @@ def _replace(trip_id: str, new: dict | None) -> Callable[[dict], None]:
     return change
 
 
+def _tag(if_match: str | None) -> str | None:
+    """If-Match 값 → 비교할 revision. 없거나 '*'(존재만 확인)면 None."""
+    tag = (if_match or "").strip().removeprefix("W/").strip('"')
+    return None if tag in ("", "*") else tag
+
+
 async def _edit(
     place: str, change: Callable[[dict], None], sub: str, if_match: str | None
 ) -> dict | None:
     """edit_timetable + If-Match(수정 버전) 충돌을 412로."""
-    tag = if_match.strip().removeprefix("W/").strip('"') if if_match else None
     try:
-        return await edit_timetable(place, change, sub, if_match=tag)
+        return await edit_timetable(place, change, sub, if_match=_tag(if_match))
     except RevisionConflictError as exc:
         raise HTTPException(
             Config.HttpStatus.PRECONDITION_FAILED,
@@ -227,9 +243,11 @@ async def update_trip(
     status_code=Config.HttpStatus.NO_CONTENT,
     responses={404: _NOT_FOUND},
 )
-async def delete_trip(place: str, trip_id: str, sub: ShuttleAdmin) -> Response:
-    """운행편 하나를 지웁니다."""
-    await _edit_trip(place, trip_id, None, sub)
+async def delete_trip(
+    place: str, trip_id: str, sub: ShuttleAdmin, if_match: IfMatch = None
+) -> Response:
+    """운행편 하나를 지웁니다. 입력 규칙에 어긋난 옛 편도 id로 지울 수 있습니다."""
+    await _edit_trip(place, trip_id, None, sub, if_match)
     _audit(sub, "shuttle_admin.trip_delete", f"{place} id={trip_id}")
     return Response(status_code=Config.HttpStatus.NO_CONTENT)
 
@@ -253,12 +271,23 @@ _REVIEW_RESPONSES = {404: _NOT_FOUND, 409: {"description": "검토 대기가 없
     response_model=AdminTimetableDetail,
     responses=_REVIEW_RESPONSES,
 )
-async def approve(place: str, sub: ShuttleAdmin, force: bool = False) -> dict:
+async def approve(
+    place: str,
+    identity: Annotated[tuple[str, list[str]], Depends(shuttle_admin_identity)],
+    force: bool = False,
+) -> dict:
     """검토 대기 파싱본을 정상본으로 승격합니다(needs_review 해제).
 
     검토 대기본이 생긴 뒤 문서를 고쳤다면 수정 내용이 사라지므로 409이며,
-    force=true일 때만 파싱본으로 덮어씁니다.
+    force=true일 때만 파싱본으로 덮어씁니다. 수정본을 덮어쓰는 force는 refresh
+    force와 같이 전체 관리자(KC_ADMIN_ROLE)만 할 수 있습니다.
     """
+    sub, roles = identity
+    if force and Config.KC_ADMIN_ROLE not in roles:
+        raise HTTPException(
+            Config.HttpStatus.FORBIDDEN,
+            "force 승인(수정본 덮어쓰기)은 전체 관리자만 할 수 있습니다.",
+        )
     return await _review(place, True, sub, force)
 
 

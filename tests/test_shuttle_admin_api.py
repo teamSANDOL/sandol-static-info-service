@@ -1,6 +1,7 @@
 """셔틀 시간표 관리자 API(/bus/admin/timetables): 권한·CRUD·검증·승인 흐름."""
 
 import asyncio
+import json
 import time
 from pathlib import Path
 from typing import Any
@@ -316,8 +317,11 @@ def test_approve_after_edit_needs_force(monkeypatch: pytest.MonkeyPatch) -> None
     res = api.post(f"{BASE}/{PDF_PLACE}/review/approve", headers=ADMIN)
     assert res.status_code == 409 and "force=true" in res.json()["detail"]
     assert {"type": "fixed", "time": "07:00", "note": None} in _main_in(_public())
+    # force 승인은 refresh force와 같이 전체 관리자만
+    approve = f"{BASE}/{PDF_PLACE}/review/approve"
+    assert api.post(approve, params={"force": "true"}, headers=ADMIN).status_code == 403
     forced = api.post(
-        f"{BASE}/{PDF_PLACE}/review/approve", params={"force": "true"}, headers=ADMIN
+        approve, params={"force": "true"}, headers=_auth(["global_admin"])
     )
     assert forced.status_code == 200 and forced.json()["source"] == "pdf"
 
@@ -390,3 +394,96 @@ def test_auto_update_flag(monkeypatch: pytest.MonkeyPatch) -> None:
     api.patch(f"{BASE}/{PDF_PLACE}", json={"title": "고침"}, headers=ADMIN)
     listed = api.get(BASE, headers=ADMIN).json()[0]
     assert listed["auto_update"] is False and listed["source"] == "user"
+
+
+def _store_raw(doc: dict) -> None:
+    Path(Config.SHUTTLE_TIMETABLE_PATH).write_text(
+        json.dumps({doc["place"]: doc}, ensure_ascii=False), encoding="utf-8"
+    )
+
+
+def test_legacy_bad_trips_visible_and_fixable() -> None:
+    """입력 규칙에 어긋난 옛 편도 관리자 상세엔 원시값+problems로 보이고 고칠 수 있음."""
+    base = {
+        "direction": "정왕역 → 본교",
+        "day_type": "평일",
+        "day_note": None,
+        "valid_from": None,
+        "valid_to": None,
+        "period_note": None,
+        "boarding_place": None,
+        "note": None,
+        "route": "정왕역 ↔ 본교",
+        "origin": "정왕역",
+        "via": [],
+        "destination": "본교",
+    }
+    trips = [
+        {**base, "departure_time": "08:00", "departure_time_end": None},
+        {**base, "departure_time": "09:00", "departure_time_end": "09:30"},  # fixed+end
+        {
+            **base,
+            "departure_time": "18:00",
+            "departure_time_end": "17:00",
+            "kind": "frequent",
+        },
+        {**base, "departure_time": "25:99", "departure_time_end": None},
+    ]
+    trips[1]["kind"] = "fixed"
+    _store_raw(
+        {"place": PLACE, "source": "user", "ref_date": "2026-09-01", "trips": trips}
+    )
+    res = api.get(f"{BASE}/{PLACE}", headers=ADMIN)
+    assert res.status_code == 200, res.text
+    got = res.json()["trips"]
+    assert len(got) == 4
+    assert got[0]["problems"] == []
+    assert all(t["problems"] for t in got[1:])
+    assert got[3]["time"] == "25:99"
+    # 공개 GET은 해석 불가 편만 건너뛰고 200
+    assert _public()["routes"][0]["directions"][1]["segments"]
+    # 문제 편을 고치고 지울 수 있음
+    fixed = api.put(f"{BASE}/{PLACE}/trips/{got[3]['id']}", json=TRIP, headers=ADMIN)
+    assert fixed.status_code == 200 and fixed.json()["problems"] == []
+    assert (
+        api.delete(f"{BASE}/{PLACE}/trips/{got[2]['id']}", headers=ADMIN).status_code
+        == 204
+    )
+    assert len(api.get(f"{BASE}/{PLACE}", headers=ADMIN).json()["trips"]) == 3
+
+
+def test_always_active_flag() -> None:
+    api.post(BASE, json={**BODY, "valid_from": None, "valid_to": None}, headers=ADMIN)
+    assert api.get(f"{BASE}/{PLACE}", headers=ADMIN).json()["always_active"] is True
+    api.patch(
+        f"{BASE}/{PLACE}",
+        json={"valid_from": "2026-09-01", "valid_to": "2026-12-22"},
+        headers=ADMIN,
+    )
+    assert api.get(BASE, headers=ADMIN).json()[0]["always_active"] is False
+
+
+def test_if_match_on_trip_post_delete_and_doc_delete() -> None:
+    created = api.post(BASE, json=BODY, headers=ADMIN).json()
+    rev, trip_id = created["revision"], created["trips"][0]["id"]
+    stale = {**ADMIN, "If-Match": '"0000000000000000"'}
+    assert (
+        api.post(f"{BASE}/{PLACE}/trips", json=TRIP, headers=stale).status_code == 412
+    )
+    assert (
+        api.delete(f"{BASE}/{PLACE}/trips/{trip_id}", headers=stale).status_code == 412
+    )
+    assert api.delete(f"{BASE}/{PLACE}", headers=stale).status_code == 412
+    star = {**ADMIN, "If-Match": "*"}
+    assert api.post(f"{BASE}/{PLACE}/trips", json=TRIP, headers=star).status_code == 201
+    assert (
+        api.post(f"{BASE}/없는문서/trips", json=TRIP, headers=star).status_code == 404
+    )
+    rev = api.get(f"{BASE}/{PLACE}", headers=ADMIN).json()["revision"]
+    ok = {**ADMIN, "If-Match": f'"{rev}"'}
+    assert api.delete(f"{BASE}/{PLACE}/trips/{trip_id}", headers=ok).status_code == 204
+    rev = api.get(f"{BASE}/{PLACE}", headers=ADMIN).json()["revision"]
+    assert (
+        api.delete(f"{BASE}/{PLACE}", headers={**ADMIN, "If-Match": rev}).status_code
+        == 204
+    )

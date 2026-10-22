@@ -20,7 +20,7 @@ from app.config.shuttle_routes import (
     SHUTTLE_DIRECTIONS,
     STOP_IDS,
 )
-from app.schemas.shuttle import ParsedTrip, ShuttleTrip
+from app.schemas.shuttle import AdminTripIn, ParsedTrip, ShuttleTrip
 from app.utils.ibookdownloader import BookDownloader
 from app.utils.shuttle_pdf import parse_shuttle_pdf
 
@@ -246,12 +246,17 @@ async def save_user_timetable(
     return doc
 
 
-async def delete_timetable(place: str) -> bool:
-    """저장된 place 문서를 삭제합니다. 있었으면 True, 없었으면 False."""
+async def delete_timetable(place: str, if_match: str | None = None) -> bool:
+    """저장된 place 문서를 삭제합니다. 있었으면 True, 없었으면 False.
+
+    if_match(수정 버전)를 주면 저장 문서와 다를 때 RevisionConflictError를 냅니다.
+    """
     async with _lock:
         store = load_store()
         if place not in store:
             return False
+        if if_match is not None and if_match != doc_revision(store[place]):
+            raise RevisionConflictError(place)
         del store[place]
         _save_store(store)
     return True
@@ -608,21 +613,33 @@ def stored_trip(data: dict, trip_id: str | None = None) -> dict:
 
 
 def admin_trip(t: dict) -> dict:
-    """저장 trip → 관리자 응답(AdminTripOut 모양)."""
-    return {
+    """저장 trip → 관리자 응답(AdminTripOut 모양). 원시값 그대로 + 규칙 위반 표시."""
+    end = t.get("departure_time_end")
+    out = {
         "id": t["id"],
-        "direction": DIRECTION_IDS[t["direction"]],
-        "day_type": t["day_type"],
-        "kind": t.get("kind") or ("frequent" if t["departure_time_end"] else "fixed"),
-        "time": _norm_hhmm(t["departure_time"]),
-        "end": _norm_hhmm(t["departure_time_end"]),
-        "note": t.get("note"),
-        "day_note": t.get("day_note"),
-        "boarding_place": t.get("boarding_place"),
-        "valid_from": t.get("valid_from"),
-        "valid_to": t.get("valid_to"),
-        "period_note": t.get("period_note"),
+        "direction": DIRECTION_IDS.get(t.get("direction"), t.get("direction")),
+        "day_type": t.get("day_type"),
+        "kind": t.get("kind") or ("frequent" if end else "fixed"),
+        "time": _norm_hhmm(t.get("departure_time")),
+        "end": _norm_hhmm(end),
+        **{
+            k: t.get(k)
+            for k in (
+                "note",
+                "day_note",
+                "boarding_place",
+                "valid_from",
+                "valid_to",
+                "period_note",
+            )
+        },
     }
+    try:
+        AdminTripIn(**{k: v for k, v in out.items() if k != "id"})
+        problems: list[str] = []
+    except ValidationError as exc:
+        problems = [str(e["msg"]) for e in exc.errors()]
+    return {**out, "problems": problems}
 
 
 def admin_summary(doc: dict) -> dict:
@@ -648,6 +665,7 @@ def admin_summary(doc: dict) -> dict:
         else None,
         "updated_at": doc.get("updated_at"),
         "updated_by": doc.get("updated_by"),
+        "always_active": doc.get("source") == "user" and rng is None,
         "auto_update": doc.get("source") != "user",
         "revision": doc_revision(doc),
     }
@@ -670,11 +688,7 @@ def admin_detail(doc: dict) -> dict:
         "pdf_url": doc.get("pdf_url"),
         "parsed_at": doc.get("parsed_at"),
         "notes": doc.get("notes", []),
-        "trips": [
-            admin_trip(t)
-            for t in with_trip_ids(doc["trips"])
-            if read_trip(t, doc.get("place")) is not None
-        ],
+        "trips": [admin_trip(t) for t in with_trip_ids(doc["trips"])],
     }
 
 
