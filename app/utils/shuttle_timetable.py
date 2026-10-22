@@ -11,6 +11,7 @@ from functools import cache
 from zoneinfo import ZoneInfo
 
 import httpx
+from pydantic import ValidationError
 
 from app.config.config import Config, logger
 from app.config.shuttle_routes import (
@@ -357,16 +358,17 @@ def _recency(doc: dict) -> str:
 def pick_document(store: dict[str, dict], on_date: date) -> dict:
     """응답에 쓸 문서 1건.
 
-    1. 조회일을 (연도까지) 포함하는 문서끼리만 겨룹니다. 기간 표기가 있는 문서가 상시
-       문서보다, 그다음 사용자 수정본이, 그다음 최신이 앞섭니다. 그래서 지난해
-       수정본이 올해 PDF를 가리지 않습니다.
+    1. 조회일을 (연도까지) 포함하는 문서끼리만 겨룹니다. 그중 관리자 문서(source
+       user)가 기간 유무와 무관하게 먼저이고(기간 없는 관리자 문서는 상시라 매일
+       유효), 다음은 기간 표기가 있는 문서, 다음은 최신입니다. 지난해 수정본은 올해
+       날짜를 포함하지 않으므로 올해 PDF를 가리지 않습니다.
     2. 포함하는 문서가 없으면 가장 최근에 끝난 문서, 그것도 없으면 가장 먼저 시작할
        문서로 빈 시간표(기간은 그 문서의 실제 기간)를 내보냅니다.
     """
     docs = list(store.values())
     ranges = [doc_range(d, on_date) for d in docs]
     covering = [
-        (r is not None, d.get("source") == "user", _recency(d), i)
+        (d.get("source") == "user", r is not None, _recency(d), i)
         for i, (d, r) in enumerate(zip(docs, ranges, strict=True))
         if r is None or r[0] <= on_date <= r[1]
     ]
@@ -460,6 +462,37 @@ def timetable_version(doc: dict, stops: list[dict], needs_review: bool) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
 
+def _norm_hhmm(v: object) -> object:
+    """옛 저장값 'H:MM'을 'HH:MM'으로. 그 밖의 값은 그대로 둡니다."""
+    if isinstance(v, str) and re.fullmatch(r"\d:[0-5]\d", v.strip()):
+        return "0" + v.strip()
+    return v
+
+
+def read_trip(raw: dict, place: str | None = None) -> dict | None:
+    """저장 trip을 읽기용으로 검증합니다. 해석할 수 없는 편은 경고만 남기고 None.
+
+    쓰기(관리자 입력)는 엄격하게 막지만, 예전에 저장된 값 하나 때문에 공개 응답
+    전체가 500이 되면 안 되므로 읽을 때는 'H:MM'을 고쳐 읽고 나머지는 건너뜁니다.
+    kind가 없던 옛 저장본도 기본값으로 읽습니다.
+    """
+    fixed = {
+        **raw,
+        "departure_time": _norm_hhmm(raw.get("departure_time")),
+        "departure_time_end": _norm_hhmm(raw.get("departure_time_end")),
+    }
+    try:
+        return {**ShuttleTrip(**fixed).model_dump(), "id": raw.get("id")}
+    except ValidationError as exc:
+        logger.warning(
+            "셔틀 trip 해석 불가로 건너뜀: place=%r trip=%r 오류=%d건",
+            place,
+            {k: raw.get(k) for k in ("direction", "day_type", "departure_time")},
+            exc.error_count(),
+        )
+        return None
+
+
 def build_timetable(doc: dict, on_date: date, needs_review: bool = False) -> dict:
     """저장 문서 1건 → 모바일 응답(계약: 날짜·운행일·방향별 segments).
 
@@ -472,7 +505,9 @@ def build_timetable(doc: dict, on_date: date, needs_review: bool = False) -> dic
     by_dir: dict[str, list[dict]] = {d: [] for d in DIRECTION_IDS}
     seen = set()
     for raw in doc["trips"]:
-        t = ShuttleTrip(**raw).model_dump()  # kind가 없던 옛 저장본도 기본값으로 읽음
+        t = read_trip(raw, doc.get("place"))
+        if t is None:
+            continue
         key = (t["direction"], t["kind"], t["departure_time"], t["departure_time_end"])
         if (
             t["day_type"] not in DAY_TYPES[day_type]
@@ -579,8 +614,8 @@ def admin_trip(t: dict) -> dict:
         "direction": DIRECTION_IDS[t["direction"]],
         "day_type": t["day_type"],
         "kind": t.get("kind") or ("frequent" if t["departure_time_end"] else "fixed"),
-        "time": t["departure_time"],
-        "end": t["departure_time_end"],
+        "time": _norm_hhmm(t["departure_time"]),
+        "end": _norm_hhmm(t["departure_time_end"]),
         "note": t.get("note"),
         "day_note": t.get("day_note"),
         "boarding_place": t.get("boarding_place"),
@@ -623,7 +658,11 @@ def admin_detail(doc: dict) -> dict:
         "pdf_url": doc.get("pdf_url"),
         "parsed_at": doc.get("parsed_at"),
         "notes": doc.get("notes", []),
-        "trips": [admin_trip(t) for t in with_trip_ids(doc["trips"])],
+        "trips": [
+            admin_trip(t)
+            for t in with_trip_ids(doc["trips"])
+            if read_trip(t, doc.get("place")) is not None
+        ],
     }
 
 

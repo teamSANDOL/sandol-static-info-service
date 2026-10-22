@@ -433,13 +433,17 @@ def _cam_body(body, cols, days, out):
         # 닫히지 않아도 같은 줄 다른 열의 시각은 그대로 읽습니다.
         parens: dict[int, list[dict]] = {}
         last: dict[int, dict] = {}
+        notes: set[int] = set()  # 각주가 시작된 열: 그 열의 줄 끝까지 무시
         for k, w in enumerate(row):
+            i = _col_of(cols, w)
+            if i in notes:
+                continue
             text = _unmark(row, k)
-            if text is None:  # '★ 정왕역 출발은 꽃집앞 출발' 같은 각주: 줄 끝까지 무시
-                break
+            if text is None:  # '★ 정왕역 출발은 꽃집앞 출발' 같은 각주
+                notes.add(i)
+                continue
             if not text:
                 continue
-            i = _col_of(cols, w)
             if i in parens or text.startswith("("):
                 buf = parens.setdefault(i, [])
                 buf.append({**w, "text": text})

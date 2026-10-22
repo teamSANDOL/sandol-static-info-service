@@ -1,7 +1,9 @@
 """TASK-138 리뷰 지적 회귀: 연도 포함 문서 선택, 괄호·★ 줄, 검증 경계, 캐시."""
 
 import asyncio
+import json
 import datetime
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -125,10 +127,22 @@ def test_star_marked_times_kept_and_footnotes_dropped() -> None:
         _w(30, 30, "8:40"),
         _w(5, 50, "★"),
         _w(30, 50, "정왕역"),
-        _w(120, 50, "11:00"),  # 각주 줄 뒤쪽 시각은 안내문의 일부
+        _w(60, 50, "12:00"),  # 각주가 시작된 열의 뒤쪽은 안내문
+        _w(120, 50, "11:00"),  # 다른 열 시각은 각주와 무관하게 읽음
+        _w(5, 70, "17:40"),
+        _w(40, 70, "★"),
+        _w(60, 70, "막차"),  # 줄 중간 각주형 ★
+        _w(120, 70, "18:00"),
     ]
     _cam_body(rows, COLS, DAYS, out)
-    assert sorted(t["departure_time"] for t in out) == ["08:30", "08:40", "09:10"]
+    assert sorted(t["departure_time"] for t in out) == [
+        "08:30",
+        "08:40",
+        "09:10",
+        "11:00",
+        "17:40",
+        "18:00",
+    ]
 
 
 def test_header_days_ignore_body_mentions() -> None:
@@ -215,3 +229,51 @@ def test_version_covers_response_fields() -> None:
     assert st.timetable_version({**doc, "pdf_url": "u2"}, [], False) != v1
     assert st.timetable_version({**doc, "parsed_at": "2026-01-01"}, [], False) != v1
     assert st.timetable_version({**doc, "pending": {"x": 1}}, [], False) == v1
+
+
+def test_bad_stored_values_do_not_break_public_get(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """옛 저장값 'H:MM'은 고쳐 읽고, 해석 불가한 편만 건너뛰며 응답은 200."""
+    good = _trip("정왕역 → 본교", "10:00")
+    store = {
+        "26년 2학기": {
+            "place": "26년 2학기",
+            "source": "pdf",
+            "parsed_at": "2026-09-05T00:00:00+00:00",
+            "trips": [
+                {**good, "departure_time": "8:40"},
+                {**good, "departure_time": "25:99"},
+                {**good, "direction": "없는 방향"},
+                good,
+            ],
+        }
+    }
+    Path(Config.SHUTTLE_TIMETABLE_PATH).write_text(
+        json.dumps(store, ensure_ascii=False), encoding="utf-8"
+    )
+    res = api.get("/bus/timetable", params={"date": "2026-10-22"})
+    assert res.status_code == 200
+    main_in = res.json()["routes"][0]["directions"][1]["segments"]
+    assert [g["time"] for g in main_in] == ["08:40", "10:00"]
+    assert "해석 불가로 건너뜀" in caplog.text
+
+
+def test_user_doc_wins_within_same_day_even_without_period() -> None:
+    pdf = {
+        "place": "26년 2학기",
+        "source": "pdf",
+        "parsed_at": "2026-09-05T00:00:00+00:00",
+        "trips": _both("08:00"),
+    }
+    always = {
+        "place": "직접(상시)",
+        "source": "user",
+        "ref_date": "2026-10-01",
+        "trips": [{**t, "valid_from": None, "valid_to": None} for t in _both("07:00")],
+    }
+    assert st.pick_document({"a": pdf, "b": always}, D(2026, 10, 22)) is always
+    # 기간 있는 관리자 문서도 그날 유효하면 우선, 기간 밖이면 PDF
+    dated = {**always, "valid_from": "2026-11-01", "valid_to": "2026-11-30"}
+    assert st.pick_document({"a": pdf, "b": dated}, D(2026, 11, 5)) is dated
+    assert st.pick_document({"a": pdf, "b": dated}, D(2026, 10, 22)) is pdf
