@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo
 
 from fastapi import Depends, HTTPException, Query
 
-from app.config import Config, logger
+from app.config import Config
 from app.routers.ibook_images import create_ibook_image_router
 from app.schemas.shuttle import DayType, ParsedTimetable
 from app.utils.shuttle_timetable import (
@@ -23,6 +23,7 @@ from app.utils.shuttle_timetable import (
     save_user_timetable,
     sync_shuttle_timetables,
 )
+from app.utils.audit import record_audit
 from app.utils.keycloak_auth import require_admin
 
 KST = ZoneInfo("Asia/Seoul")
@@ -34,11 +35,6 @@ _AUTH_RESPONSES: dict[int | str, dict] = {
     403: {"description": "관리자 롤이 없습니다."},
     503: {"description": "관리자 인증이 설정되지 않았습니다(fail-closed)."},
 }
-
-
-def _audit(sub: str, action: str, target: str) -> None:
-    """관리자 화면의 log_admin_action과 같은 형식의 감사 로그(Bearer 경로용)."""
-    logger.info("admin_audit sub=%s action=%s target=%s", sub, action, target)
 
 
 router = create_ibook_image_router("/bus", Config.SHUTTLE_URL, "버스")
@@ -120,12 +116,25 @@ async def get_shuttle_timetable(
         "sources": [
             {
                 k: d.get(k)
-                for k in ("place", "title", "pdf_url", "parsed_at", "source", "updated_at")
+                for k in (
+                    "place",
+                    "title",
+                    "pdf_url",
+                    "parsed_at",
+                    "source",
+                    "updated_at",
+                )
             }
             for d in store.values()
         ],
         "trips": query_trips(
-            store, route, day_type, origin, destination, query_date, include_all=include_all
+            store,
+            route,
+            day_type,
+            origin,
+            destination,
+            query_date,
+            include_all=include_all,
         ),
     }
 
@@ -147,7 +156,7 @@ async def refresh_shuttle_timetable(sub: Admin, force: bool = False):
     force=True면 사용자 수정본과 PDF 해시 가드를 모두 무시하고 재파싱합니다
     (사용자 수정본을 덮어쓰는 유일한 경로이며, 명시적으로 호출했을 때만 동작).
     """
-    _audit(sub, "shuttle_refresh", f"force={force}")
+    record_audit(sub, "shuttle_refresh", f"force={force}")
     task = asyncio.create_task(sync_shuttle_timetables(force))
     _background.add(task)
     task.add_done_callback(_background.discard)
@@ -169,7 +178,7 @@ async def put_shuttle_timetable(place: str, body: ParsedTimetable, sub: Admin):
     저장 문서는 source="user"로 표시되어 cron/refresh(force 없이는)가 다시 파싱하지 않습니다.
     """
     doc = await save_user_timetable(place, body.trips, body.title, updated_by=sub)
-    _audit(sub, "shuttle_put", place)
+    record_audit(sub, "shuttle_put", place)
     return doc
 
 
@@ -188,4 +197,4 @@ async def delete_shuttle_timetable(place: str, sub: Admin):
     """place 문서를 삭제합니다. 사용자 수정본을 되돌려 다시 PDF 파싱 대상으로 만들 때 사용합니다."""
     if not await delete_timetable(place):
         raise HTTPException(status_code=Config.HttpStatus.NOT_FOUND)
-    _audit(sub, "shuttle_delete", place)
+    record_audit(sub, "shuttle_delete", place)

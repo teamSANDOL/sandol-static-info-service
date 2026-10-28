@@ -1,7 +1,7 @@
 """TUK World 관리 화면: 식당 CRUD와 이미지 업로드·삭제.
 
 이미지 검증·저장·삭제는 REST API와 같은 app.utils.tuk_world_images를 쓴다.
-Restaurant에는 updated_by 컬럼이 없어 작성자는 감사 로그(admin_audit)로만 남긴다.
+작성자는 updated_by 컬럼과 감사 로그(admin_audit_log)에 남긴다.
 """
 
 from typing import Any
@@ -14,7 +14,7 @@ from starlette.requests import Request
 from wtforms import FileField, FloatField, Form
 from wtforms.validators import NumberRange, Optional, Regexp
 
-from app.admin.auth import log_admin_action
+from app.admin.auth import admin_sub, log_admin_action
 from app.config import Config
 from app.database import SessionLocal
 from app.models.tuk_world import Restaurant, RestaurantImage
@@ -92,6 +92,12 @@ class RestaurantAdmin(ModelView, model=Restaurant):
         "longitude": {"validators": [NumberRange(-180, 180, "경도는 -180~180입니다.")]},
     }
 
+    async def on_model_change(
+        self, data: dict, model: Any, is_created: bool, request: Request
+    ) -> None:
+        """수정자를 기록합니다."""
+        model.updated_by = admin_sub(request)
+
     async def after_model_change(
         self, data: dict, model: Any, is_created: bool, request: Request
     ) -> None:
@@ -153,6 +159,7 @@ class RestaurantImageAdmin(ModelView, model=RestaurantImage):
             raise ValueError(f"이미지 검증 실패: {escape(str(exc))}") from exc
         model.filename = save_image(raw, ext)
         model.content_type = mime
+        model.updated_by = admin_sub(request)
 
     async def after_model_change(
         self, data: dict, model: Any, is_created: bool, request: Request

@@ -24,7 +24,7 @@ SessionLocal = sessionmaker(engine, expire_on_commit=False)
 def init_db() -> None:
     """저장 디렉터리와 테이블이 없으면 생성합니다."""
     # 모델을 import해야 Base.metadata에 테이블이 등록된다.
-    from app.models import tuk_world  # noqa: F401
+    from app.models import admin_audit, tuk_world  # noqa: F401
 
     os.makedirs(Config.TUK_WORLD_IMAGE_DIR, exist_ok=True)
     # ponytail: create_all + 누락 nullable 컬럼 ADD COLUMN만. 타입 변경·삭제가

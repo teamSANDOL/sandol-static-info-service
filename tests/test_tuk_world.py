@@ -301,3 +301,27 @@ def test_allowed_clients(
 def test_bus_write_requires_token(method: str, path: str) -> None:
     res = client.request(method, path, json={"trips": []} if method == "PUT" else None)
     assert res.status_code == 401
+
+
+def test_updated_by_and_audit_rows_recorded() -> None:
+    from sqlalchemy import select
+
+    from app.database import SessionLocal
+    from app.models.admin_audit import AdminAuditLog
+    from app.models.tuk_world import Restaurant, RestaurantImage
+
+    rid = create()
+    client.post(
+        f"/tuk-world/restaurants/{rid}/images",
+        files={"file": ("a.png", png_bytes(), "image/png")},
+        headers=ADMIN,
+    )
+    with SessionLocal() as db:
+        restaurant = db.get(Restaurant, rid)
+        assert restaurant is not None and restaurant.updated_by == "admin-sub"
+        assert restaurant.images[0].updated_by == "admin-sub"
+        actions = db.scalars(
+            select(AdminAuditLog.action).where(AdminAuditLog.target == f"id={rid}")
+        ).all()
+        assert "tuk_world.restaurant.create" in actions
+        assert db.scalars(select(RestaurantImage)).first() is not None

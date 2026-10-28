@@ -29,6 +29,8 @@ class Restaurant(Base):
     discount_info: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
+    # 마지막으로 바꾼 관리자 Keycloak sub. 공개 응답에는 노출하지 않는다.
+    updated_by: Mapped[str | None] = mapped_column(String(100))
     images: Mapped[list["RestaurantImage"]] = relationship(
         back_populates="restaurant",
         cascade="all, delete-orphan",
@@ -49,4 +51,5 @@ class RestaurantImage(Base):
     filename: Mapped[str] = mapped_column(String(64), unique=True)
     content_type: Mapped[str] = mapped_column(String(32))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    updated_by: Mapped[str | None] = mapped_column(String(100))
     restaurant: Mapped[Restaurant] = relationship(back_populates="images")

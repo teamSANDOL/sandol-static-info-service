@@ -22,6 +22,7 @@ _VIEWS = [
     ("app.admin.shuttle_view", "ShuttleAdminView"),
     ("app.admin.organization_view", "OrganizationAdminView"),
     ("app.admin.tuk_world_view", "TukWorldAdmin"),
+    ("app.admin.audit_view", "AuditLogAdmin"),
 ]
 
 

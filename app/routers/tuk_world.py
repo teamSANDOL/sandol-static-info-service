@@ -20,7 +20,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.config import Config, logger
+from app.config import Config
 from app.models.tuk_world import Restaurant, RestaurantImage
 from app.schemas.tuk_world import (
     RestaurantCreate,
@@ -29,6 +29,7 @@ from app.schemas.tuk_world import (
     RestaurantUpdate,
 )
 from app.utils.db import get_db
+from app.utils.audit import record_audit
 from app.utils.keycloak_auth import require_admin
 from app.utils.tuk_world_images import (
     ImageValidationError,
@@ -140,10 +141,10 @@ def create_restaurant(
     body: RestaurantCreate, request: Request, db: Db, admin: Admin
 ) -> RestaurantOut:
     """식당을 등록합니다."""
-    restaurant = Restaurant(**body.model_dump(mode="json"))
+    restaurant = Restaurant(**body.model_dump(mode="json"), updated_by=admin)
     db.add(restaurant)
     db.commit()
-    logger.info("TUK World 식당 등록 id=%s by=%s", restaurant.id, admin)
+    record_audit(admin, "tuk_world.restaurant.create", f"id={restaurant.id}")
     return _to_out(request, restaurant)
 
 
@@ -171,8 +172,9 @@ def update_restaurant(
     restaurant = _get_or_404(db, restaurant_id)
     for key, value in changes.items():
         setattr(restaurant, key, value)
+    restaurant.updated_by = admin
     db.commit()
-    logger.info("TUK World 식당 수정 id=%s by=%s", restaurant_id, admin)
+    record_audit(admin, "tuk_world.restaurant.update", f"id={restaurant_id}")
     return _to_out(request, restaurant)
 
 
@@ -193,7 +195,7 @@ def delete_restaurant(restaurant_id: int, db: Db, admin: Admin) -> Response:
     db.commit()
     for name in filenames:
         remove_image(name)
-    logger.info("TUK World 식당 삭제 id=%s by=%s", restaurant_id, admin)
+    record_audit(admin, "tuk_world.restaurant.delete", f"id={restaurant_id}")
     return Response(status_code=204)
 
 
@@ -227,15 +229,18 @@ def upload_image(
         )
         raise HTTPException(code, detail) from exc
     filename = save_image(data, ext)
-    restaurant.images.append(RestaurantImage(filename=filename, content_type=mime))
+    restaurant.images.append(
+        RestaurantImage(filename=filename, content_type=mime, updated_by=admin)
+    )
     restaurant.updated_at = datetime.now(UTC)
+    restaurant.updated_by = admin
     try:
         db.commit()
     except Exception:
         remove_image(filename)
         raise
     db.refresh(restaurant)
-    logger.info("TUK World 이미지 업로드 restaurant=%s by=%s", restaurant_id, admin)
+    record_audit(admin, "tuk_world.image.upload", f"restaurant={restaurant_id}")
     return _to_out(request, restaurant)
 
 
@@ -273,8 +278,9 @@ def delete_image(image_id: int, db: Db, admin: Admin) -> Response:
         raise HTTPException(Config.HttpStatus.NOT_FOUND, "이미지를 찾을 수 없습니다.")
     filename = image.filename
     image.restaurant.updated_at = datetime.now(UTC)
+    image.restaurant.updated_by = admin
     db.delete(image)
     db.commit()
     remove_image(filename)
-    logger.info("TUK World 이미지 삭제 id=%s by=%s", image_id, admin)
+    record_audit(admin, "tuk_world.image.delete", f"id={image_id}")
     return Response(status_code=204)
