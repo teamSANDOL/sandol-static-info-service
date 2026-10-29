@@ -12,11 +12,12 @@ from app.routers import (
     bus_router,
     meal_router,
     organization_router,
+    shuttle_admin_router,
     tuk_world_router,
 )
 from app.config import Config, logger
 from app.jobs.scheduler import start_scheduler, stop_scheduler
-from app.utils.shuttle_timetable import sync_shuttle_timetables
+from app.services.shuttle_sync import sync_shuttle_timetables
 
 
 @asynccontextmanager
@@ -47,6 +48,7 @@ async def lifespan(app: FastAPI):
 # lifespan 적용
 app = FastAPI(lifespan=lifespan, root_path=Config.ROOT_PATH)
 app.include_router(bus_router)
+app.include_router(shuttle_admin_router)
 app.include_router(meal_router)
 app.include_router(organization_router)
 app.include_router(tuk_world_router)

@@ -19,7 +19,7 @@ from app.admin import shuttle_view
 from app.config import Config
 from app.services import shuttle as shuttle_service
 from app.utils import keycloak_auth
-from app.utils import shuttle_timetable as st
+from app.services import shuttle_store as sto
 from main import app
 
 KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
@@ -99,7 +99,7 @@ def test_write_api_fail_closed_without_keycloak(
         headers=_bearer(["global_admin"]),
     )
     assert res.status_code == 503
-    assert st.load_store() == {}
+    assert sto.load_store() == {}
 
 
 def test_admin_put_keeps_title_and_updated_by(
@@ -112,14 +112,16 @@ def test_admin_put_keeps_title_and_updated_by(
         headers=headers,
     )
     assert res.status_code == 200, res.text
-    doc = st.load_store()[PLACE]
+    doc = sto.load_store()[PLACE]
     assert doc["title"] == "2학기 직접 등록"
     assert doc["source"] == "user" and doc["updated_by"] == "admin-sub"
     assert "admin_audit sub=admin-sub action=shuttle.timetable.put" in caplog.text
 
     # GET은 공개 유지
-    got = api.get("/bus/timetable", params={"all": "true"})
-    assert got.status_code == 200 and got.json()["trips"][0]["note"] == "첫차"
+    got = api.get("/bus/timetable", params={"date": "2026-10-22"})
+    assert got.status_code == 200
+    main_in = got.json()["routes"][0]["directions"][1]
+    assert main_in["segments"] == [{"type": "fixed", "time": "08:40", "note": "첫차"}]
 
     assert api.delete(f"/bus/timetable/{PLACE}", headers=headers).status_code == 204
     assert api.delete(f"/bus/timetable/{PLACE}", headers=headers).status_code == 404
@@ -204,7 +206,7 @@ def test_anonymous_redirected(admin: TestClient) -> None:
 def test_post_without_csrf_rejected(admin: TestClient) -> None:
     res = admin.post(URL, data=_save_form("0" * 64, PLACE))
     assert res.status_code == 403
-    assert st.load_store() == {}
+    assert sto.load_store() == {}
 
 
 def test_register_edit_delete(
@@ -213,7 +215,7 @@ def test_register_edit_delete(
     csrf = _csrf(admin)
     res = admin.post(URL, data=_save_form(csrf, PLACE, is_new="1"))
     assert res.status_code == 303 and res.headers["location"].startswith(URL)
-    doc = st.load_store()[PLACE]
+    doc = sto.load_store()[PLACE]
     assert doc["source"] == "user" and doc["updated_by"] == "admin-sub"
     assert doc["title"] == "직접 등록 제목"
     assert [t["departure_time"] for t in doc["trips"]] == ["18:10"]
@@ -244,10 +246,10 @@ def test_register_edit_delete(
         ),
     )
     assert res.status_code == 303
-    assert [t["departure_time"] for t in st.load_store()[PLACE]["trips"]] == ["09:00"]
+    assert [t["departure_time"] for t in sto.load_store()[PLACE]["trips"]] == ["09:00"]
 
     res = admin.post(URL, data={"csrf_token": csrf, "action": "delete", "place": PLACE})
-    assert res.status_code == 303 and PLACE not in st.load_store()
+    assert res.status_code == 303 and PLACE not in sto.load_store()
     assert "action=shuttle.timetable.delete" in caplog.text
 
 
@@ -257,7 +259,7 @@ def test_invalid_time_keeps_input(admin: TestClient) -> None:
         URL, data=_save_form(csrf, PLACE, is_new="1", **{"t-0-departure_time": "25:00"})
     )
     assert res.status_code == 400 and 'value="25:00"' in res.text
-    assert st.load_store() == {}
+    assert sto.load_store() == {}
 
 
 def test_sync_from_screen(admin: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:

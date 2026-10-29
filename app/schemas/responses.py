@@ -16,6 +16,12 @@ AUTH_RESPONSES: OpenApiResponses = {
     },
 }
 
+# 셔틀 관리자 롤(SHUTTLE_ADMIN_ROLES)을 요구하는 엔드포인트용. 403 문구만 다르다.
+SHUTTLE_AUTH_RESPONSES: OpenApiResponses = {
+    **AUTH_RESPONSES,
+    Config.HttpStatus.FORBIDDEN: {"description": "셔틀 관리자 롤 없음"},
+}
+
 
 def all_images_responses(label: str) -> OpenApiResponses:
     """`GET {prefix}/images`의 responses 선언을 만듭니다.

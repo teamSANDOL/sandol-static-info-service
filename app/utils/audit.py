@@ -30,7 +30,14 @@ def record_audit(
         actor_name: 수행자 표시 이름(알 수 있을 때만).
         detail: 대상 식별자와 짧은 요약. 변경 전후 전체 내용은 넣지 않는다.
     """
-    logger.info("admin_audit sub=%s action=%s target=%s", sub, action, target)
+    # target엔 place 등 사용자 입력이 섞여 줄바꿈·따옴표를 이스케이프해 로그 위조를 막는다
+    # (sub는 서명 검증된 토큰 값).
+    logger.info(
+        "admin_audit sub=%s action=%s target=%s",
+        sub,
+        action,
+        json.dumps(target, ensure_ascii=False),
+    )
     try:
         with SessionLocal() as db:
             db.add(
