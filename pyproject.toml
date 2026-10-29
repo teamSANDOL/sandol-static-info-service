@@ -12,6 +12,12 @@ dependencies = [
     "uvicorn (>=0.34.1,<0.35.0)",
     "pdfplumber>=0.11.4",
     "apscheduler>=3.11.0",
+    "sqlalchemy[asyncio]>=2.0,<3",
+    "pyjwt[crypto]>=2.10,<3",
+    "python-multipart>=0.0.20",
+    "pillow>=11",
+    "sqladmin>=0.24,<0.25",
+    "cryptography>=44",
 ]
 
 [dependency-groups]
@@ -21,6 +27,7 @@ dev = [
     "mypy>=1.15.0,<2",
     "types-pytz>=2025.1.0.20250204,<2026",
     "pytest>=9.1.1",
+    "types-wtforms>=3.2.1.20260518",
 ]
 
 [tool.uv]

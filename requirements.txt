@@ -26,9 +26,14 @@ colorama==0.4.6 ; sys_platform == 'win32'
     #   click
     #   pytest
 cryptography==50.0.1
-    # via pdfminer-six
+    # via
+    #   pdfminer-six
+    #   pyjwt
+    #   sandol-static-info-service
 fastapi==0.115.12
     # via sandol-static-info-service
+greenlet==3.5.6
+    # via sqlalchemy
 h11==0.16.0
     # via
     #   httpcore
@@ -43,6 +48,13 @@ idna==3.19
     #   httpx
 iniconfig==2.3.0
     # via pytest
+jinja2==3.1.6
+    # via sqladmin
+markupsafe==3.0.4
+    # via
+    #   jinja2
+    #   types-wtforms
+    #   wtforms
 mypy==1.15.0
 mypy-extensions==1.0.0
     # via
@@ -59,7 +71,9 @@ pdfminer-six==20260107
 pdfplumber==0.11.10
     # via sandol-static-info-service
 pillow==12.3.0
-    # via pdfplumber
+    # via
+    #   pdfplumber
+    #   sandol-static-info-service
 platformdirs==4.3.7
     # via black
 pluggy==1.6.0
@@ -72,15 +86,30 @@ pydantic-core==2.33.1
     # via pydantic
 pygments==2.21.0
     # via pytest
+pyjwt==2.15.1
+    # via sandol-static-info-service
 pypdfium2==5.13.0
     # via pdfplumber
 pytest==9.1.1
 python-dotenv==1.1.0
     # via sandol-static-info-service
+python-multipart==0.0.32
+    # via
+    #   sandol-static-info-service
+    #   sqladmin
 ruff==0.9.10
+sqladmin==0.24.0
+    # via sandol-static-info-service
+sqlalchemy==2.1.4
+    # via
+    #   sandol-static-info-service
+    #   sqladmin
 starlette==0.46.2
-    # via fastapi
+    # via
+    #   fastapi
+    #   sqladmin
 types-pytz==2025.2.0.20250326
+types-wtforms==3.2.1.20260518
 typing-extensions==4.16.0
     # via
     #   anyio
@@ -88,6 +117,7 @@ typing-extensions==4.16.0
     #   mypy
     #   pydantic
     #   pydantic-core
+    #   sqlalchemy
     #   typing-inspection
 typing-inspection==0.4.0
     # via pydantic
@@ -97,3 +127,5 @@ tzlocal==5.4.4
     # via apscheduler
 uvicorn==0.34.1
     # via sandol-static-info-service
+wtforms==3.1.2
+    # via sqladmin

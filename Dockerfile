@@ -15,4 +15,6 @@ COPY . /app
 EXPOSE 80
 
 # Command to run the FastAPI application
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "80"]
+# 게이트웨이의 X-Forwarded-Proto를 믿어 관리자 화면 URL을 https로 만든다.
+# 컨테이너는 내부망에서만 접근되므로 모든 프록시 IP를 허용한다.
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "80", "--proxy-headers", "--forwarded-allow-ips=*"]

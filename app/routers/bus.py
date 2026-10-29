@@ -3,13 +3,15 @@
 - 이미지: GET /bus/images, GET /bus/image/{index} (iBook 뷰어 페이지 이미지)
 - 시간표: GET /bus/timetable, POST /bus/timetable/refresh,
           PUT/DELETE /bus/timetable/{place}
+- 쓰기(refresh/PUT/DELETE)는 Keycloak 관리자 Bearer 토큰이 필요합니다(require_admin).
 """
 
 import asyncio
 import datetime
+from typing import Annotated
 from zoneinfo import ZoneInfo
 
-from fastapi import HTTPException, Query
+from fastapi import Depends, HTTPException, Query
 
 from app.config import Config
 from app.routers.ibook_images import create_ibook_image_router
@@ -21,8 +23,19 @@ from app.utils.shuttle_timetable import (
     save_user_timetable,
     sync_shuttle_timetables,
 )
+from app.utils.audit import record_audit
+from app.utils.keycloak_auth import require_admin
 
 KST = ZoneInfo("Asia/Seoul")
+Admin = Annotated[str, Depends(require_admin)]
+_background: set[asyncio.Task] = set()  # create_task 결과가 GC되지 않게 참조 보관
+
+_AUTH_RESPONSES: dict[int | str, dict] = {
+    401: {"description": "Bearer 토큰이 없거나 유효하지 않습니다."},
+    403: {"description": "관리자 롤이 없습니다."},
+    503: {"description": "관리자 인증이 설정되지 않았습니다(fail-closed)."},
+}
+
 
 router = create_ibook_image_router("/bus", Config.SHUTTLE_URL, "버스")
 
@@ -103,12 +116,25 @@ async def get_shuttle_timetable(
         "sources": [
             {
                 k: d.get(k)
-                for k in ("place", "title", "pdf_url", "parsed_at", "source", "updated_at")
+                for k in (
+                    "place",
+                    "title",
+                    "pdf_url",
+                    "parsed_at",
+                    "source",
+                    "updated_at",
+                )
             }
             for d in store.values()
         ],
         "trips": query_trips(
-            store, route, day_type, origin, destination, query_date, include_all=include_all
+            store,
+            route,
+            day_type,
+            origin,
+            destination,
+            query_date,
+            include_all=include_all,
         ),
     }
 
@@ -120,16 +146,20 @@ async def get_shuttle_timetable(
         Config.HttpStatus.ACCEPTED: {
             "description": "iBook 원본 PDF로 백그라운드 동기화 시작(변경 시에만 재파싱). 결과는 GET /bus/timetable 로 확인"
         },
+        **_AUTH_RESPONSES,
     },
 )
-async def refresh_shuttle_timetable(force: bool = False):
+async def refresh_shuttle_timetable(sub: Admin, force: bool = False):
     """수동으로 셔틀 시간표 동기화를 트리거합니다. 평소엔 6시간 cron이 대신합니다.
 
     PDF 파싱은 빠르지만 다운로드가 느릴 수 있어 백그라운드로 돌립니다.
     force=True면 사용자 수정본과 PDF 해시 가드를 모두 무시하고 재파싱합니다
     (사용자 수정본을 덮어쓰는 유일한 경로이며, 명시적으로 호출했을 때만 동작).
     """
-    asyncio.create_task(sync_shuttle_timetables(force))
+    record_audit(sub, "shuttle_refresh", f"force={force}")
+    task = asyncio.create_task(sync_shuttle_timetables(force))
+    _background.add(task)
+    task.add_done_callback(_background.discard)
     return {"queued": True}
 
 
@@ -139,14 +169,17 @@ async def refresh_shuttle_timetable(force: bool = False):
         Config.HttpStatus.OK: {
             "description": "사용자가 입력한 시간표를 저장했습니다. 이후 cron/refresh는 이 place를 덮어쓰지 않습니다."
         },
+        **_AUTH_RESPONSES,
     },
 )
-async def put_shuttle_timetable(place: str, body: ParsedTimetable):
+async def put_shuttle_timetable(place: str, body: ParsedTimetable, sub: Admin):
     """place의 시간표를 사용자가 직접 입력한 내용으로 덮어씁니다.
 
     저장 문서는 source="user"로 표시되어 cron/refresh(force 없이는)가 다시 파싱하지 않습니다.
     """
-    return await save_user_timetable(place, body.trips)
+    doc = await save_user_timetable(place, body.trips, body.title, updated_by=sub)
+    record_audit(sub, "shuttle_put", place)
+    return doc
 
 
 @router.delete(
@@ -157,9 +190,11 @@ async def put_shuttle_timetable(place: str, body: ParsedTimetable):
             "description": "삭제했습니다. 이후 cron/refresh가 다시 PDF로 파싱합니다."
         },
         Config.HttpStatus.NOT_FOUND: {"description": "해당 place가 없습니다."},
+        **_AUTH_RESPONSES,
     },
 )
-async def delete_shuttle_timetable(place: str):
+async def delete_shuttle_timetable(place: str, sub: Admin):
     """place 문서를 삭제합니다. 사용자 수정본을 되돌려 다시 PDF 파싱 대상으로 만들 때 사용합니다."""
     if not await delete_timetable(place):
         raise HTTPException(status_code=Config.HttpStatus.NOT_FOUND)
+    record_audit(sub, "shuttle_delete", place)
