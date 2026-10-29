@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Path, HTTPException
 from typing import Union, List
+from app.config import Config
 from app.utils.university_structure import (
     get_tukorea_structure,
     OrganizationGroup,
@@ -9,7 +10,9 @@ from app.utils.university_structure import (
 router = APIRouter(
     prefix="/organization",
     tags=["Organization"],
-    responses={404: {"description": "조직을 찾을 수 없습니다."}},
+    responses={
+        Config.HttpStatus.NOT_FOUND: {"description": "조직을 찾을 수 없습니다."}
+    },
 )
 
 
@@ -100,5 +103,7 @@ async def get_organization(
     structure = get_tukorea_structure()
     result = structure.get_unit(path)
     if result is None:
-        raise HTTPException(status_code=404, detail="조직을 찾을 수 없습니다.")
+        raise HTTPException(
+            status_code=Config.HttpStatus.NOT_FOUND, detail="조직을 찾을 수 없습니다."
+        )
     return result

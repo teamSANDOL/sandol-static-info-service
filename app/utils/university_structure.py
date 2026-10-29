@@ -73,9 +73,7 @@ class UniversityStructure(BaseModel):
         subunits = {key: cls._parse_data(key, value) for key, value in data.items()}
         return OrganizationGroup(name=name, subunits=subunits)
 
-    def get_unit(
-        self, query: str
-    ) -> OrganizationUnit | OrganizationGroup | None:
+    def get_unit(self, query: str) -> OrganizationUnit | OrganizationGroup | None:
         """조직 구조에서 해당하는 부분을 찾아 반환
 
         Args:

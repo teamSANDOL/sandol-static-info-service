@@ -17,7 +17,7 @@ from app.admin import auth as admin_auth
 from app.admin import mount_admin
 from app.admin import shuttle_view
 from app.config import Config
-from app.routers import bus
+from app.services import shuttle as shuttle_service
 from app.utils import keycloak_auth
 from app.utils import shuttle_timetable as st
 from main import app
@@ -115,7 +115,7 @@ def test_admin_put_keeps_title_and_updated_by(
     doc = st.load_store()[PLACE]
     assert doc["title"] == "2학기 직접 등록"
     assert doc["source"] == "user" and doc["updated_by"] == "admin-sub"
-    assert "admin_audit sub=admin-sub action=shuttle_put" in caplog.text
+    assert "admin_audit sub=admin-sub action=shuttle.timetable.put" in caplog.text
 
     # GET은 공개 유지
     got = api.get("/bus/timetable", params={"all": "true"})
@@ -127,7 +127,7 @@ def test_admin_put_keeps_title_and_updated_by(
 
 def test_admin_refresh_queues_sync(monkeypatch: pytest.MonkeyPatch) -> None:
     sync = AsyncMock(return_value=[])
-    monkeypatch.setattr(bus, "sync_shuttle_timetables", sync)
+    monkeypatch.setattr(shuttle_service, "sync_shuttle_timetables", sync)
     res = api.post(
         "/bus/timetable/refresh",
         params={"force": "true"},
@@ -218,7 +218,7 @@ def test_register_edit_delete(
     assert doc["title"] == "직접 등록 제목"
     assert [t["departure_time"] for t in doc["trips"]] == ["18:10"]
     assert doc["trips"][0]["destination"] == "정왕역"
-    assert "admin_audit sub=admin-sub action=shuttle_save" in caplog.text
+    assert "admin_audit sub=admin-sub action=shuttle.timetable.put" in caplog.text
 
     listing = admin.get(URL)
     assert listing.status_code == 200 and PLACE in listing.text
@@ -248,7 +248,7 @@ def test_register_edit_delete(
 
     res = admin.post(URL, data={"csrf_token": csrf, "action": "delete", "place": PLACE})
     assert res.status_code == 303 and PLACE not in st.load_store()
-    assert "action=shuttle_delete" in caplog.text
+    assert "action=shuttle.timetable.delete" in caplog.text
 
 
 def test_invalid_time_keeps_input(admin: TestClient) -> None:

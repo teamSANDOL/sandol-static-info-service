@@ -50,7 +50,9 @@ def _cx(w):
 
 
 def _vlines(page):
-    return sorted({round(l["x0"], 1) for l in page.lines if abs(l["x0"] - l["x1"]) < 1.5})
+    return sorted(
+        {round(l["x0"], 1) for l in page.lines if abs(l["x0"] - l["x1"]) < 1.5}
+    )
 
 
 def _hlines(page):
@@ -206,7 +208,9 @@ def _parse_grid(page, words, day_type, out):
                 " ".join(w["text"] for w in cells if not INT.match(w["text"])).strip()
                 or None
             )
-            for rng in re.finditer(r"(\d{1,2}):(\d{2})\s*~\s*(\d{1,2}):(\d{2})", joined):
+            for rng in re.finditer(
+                r"(\d{1,2}):(\d{2})\s*~\s*(\d{1,2}):(\d{2})", joined
+            ):
                 out.append(
                     _trip(
                         direction,
@@ -225,7 +229,9 @@ def _parse_grid(page, words, day_type, out):
             last = re.search(r"~\s*(\d{1,2})분", joined)
             if last:
                 out.append(
-                    _trip(direction, day_type, _hhmm(cur_hour, last.group(1)), note="막차")
+                    _trip(
+                        direction, day_type, _hhmm(cur_hour, last.group(1)), note="막차"
+                    )
                 )
             for w in cells:
                 if INT.match(w["text"]) and int(w["text"]) <= 59:
@@ -312,7 +318,8 @@ def _parse_cam(page, words, out, grid_bottom, page_day):
     arrows = [
         w
         for w in region
-        if ("⇒" in w["text"] or "→" in w["text"]) and any(t > w["top"] for t in times_top)
+        if ("⇒" in w["text"] or "→" in w["text"])
+        and any(t > w["top"] for t in times_top)
     ]
     if not arrows:
         _parse_departure_cols(page, words, out, page_day)

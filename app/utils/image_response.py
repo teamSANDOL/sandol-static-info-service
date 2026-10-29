@@ -4,7 +4,7 @@ from fastapi.responses import (
     StreamingResponse,
     PlainTextResponse,
 )
-from fastapi import HTTPException
+from fastapi import HTTPException, Request
 import httpx, base64, io, zipfile
 
 from app.config import Config
@@ -174,4 +174,47 @@ async def build_image_response(
         return await build_response_text(urls)
     if response_type == "jpeg":
         return await build_response_jpeg(urls, file_stem)
-    raise HTTPException(status_code=400, detail="지원되지 않는 response_type입니다.")
+    raise HTTPException(
+        status_code=Config.HttpStatus.BAD_REQUEST,
+        detail="지원되지 않는 response_type입니다.",
+    )
+
+
+# Accept 헤더 -> response_type. 순서가 우선순위입니다.
+ALL_IMAGES_TYPES: list[tuple[str, str]] = [
+    (Config.Accept.JSON, "json"),
+    (Config.Accept.BASE64, "base64"),
+    (Config.Accept.ZIP, "zip"),
+    (Config.Accept.OCTET_STREAM, "octet-stream"),
+]
+SINGLE_IMAGE_TYPES: list[tuple[str, str]] = [
+    (Config.Accept.JSON, "json"),
+    (Config.Accept.BASE64, "base64"),
+    (Config.Accept.OCTET_STREAM, "octet-stream"),
+    (Config.Accept.ZIP, "zip"),
+    ("text/plain", "text"),
+    (Config.ImageType.JPEG, "jpeg"),
+]
+
+
+def resolve_response_type(request: Request, table: list[tuple[str, str]]) -> str:
+    """Accept 헤더에 맞는 response_type을 고릅니다.
+
+    Args:
+        request: 현재 요청(Accept 헤더를 읽는다).
+        table: (MIME, response_type) 목록. 앞쪽이 우선한다.
+
+    Returns:
+        선택된 response_type.
+
+    Raises:
+        HTTPException: 지원하는 Accept가 없으면 406.
+    """
+    accept_header = request.headers.get("accept", "").lower()
+    for mime, response_type in table:
+        if mime in accept_header:
+            return response_type
+    raise HTTPException(
+        status_code=Config.HttpStatus.NOT_ACCEPTABLE,
+        detail="지원되지 않는 Accept 헤더입니다.",
+    )

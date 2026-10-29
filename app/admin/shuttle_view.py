@@ -15,6 +15,7 @@ from starlette.datastructures import FormData
 from starlette.requests import Request
 from starlette.responses import RedirectResponse, Response
 
+from app.config import Config
 from app.admin.auth import admin_sub, csrf_token, log_admin_action, verify_csrf
 from app.schemas.shuttle import DayType, Direction, ParsedTrip
 from app.utils.shuttle_timetable import (
@@ -91,10 +92,14 @@ class ShuttleAdminView(BaseView):
         # 게이트웨이가 X-Forwarded-Proto를 넘기지 않으므로 절대 URL 대신 경로로 보낸다.
         path = request.url_for("admin:shuttle").path
         query = f"?{urlencode(params)}" if params else ""
-        return RedirectResponse(path + query, status_code=303)
+        return RedirectResponse(path + query, status_code=Config.HttpStatus.SEE_OTHER)
 
     async def _render(
-        self, request: Request, template: str, status_code: int = 200, **ctx: object
+        self,
+        request: Request,
+        template: str,
+        status_code: int = Config.HttpStatus.OK,
+        **ctx: object,
     ) -> Response:
         response = await self.templates.TemplateResponse(
             request,
@@ -122,7 +127,7 @@ class ShuttleAdminView(BaseView):
         return await self._render(
             request,
             "admin/shuttle_edit.html",
-            400 if error else 200,
+            Config.HttpStatus.BAD_REQUEST if error else Config.HttpStatus.OK,
             place=doc.get("place") or "",
             is_new=is_new,
             doc_title=doc.get("title"),
@@ -153,19 +158,24 @@ class ShuttleAdminView(BaseView):
     async def _post(self, request: Request) -> Response:
         form = await request.form()
         if not verify_csrf(request, _opt(form.get("csrf_token"))):
-            return Response("CSRF 토큰이 올바르지 않습니다.", status_code=403)
+            return Response(
+                "CSRF 토큰이 올바르지 않습니다.",
+                status_code=Config.HttpStatus.FORBIDDEN,
+            )
         handler = {
             "sync": self._sync,
             "delete": self._delete,
             "save": self._save,
         }.get(str(form.get("action")))
         if handler is None:
-            return Response("알 수 없는 요청입니다.", status_code=400)
+            return Response(
+                "알 수 없는 요청입니다.", status_code=Config.HttpStatus.BAD_REQUEST
+            )
         return await handler(request, form)
 
     async def _sync(self, request: Request, form: FormData) -> Response:
         force = bool(form.get("force"))
-        log_admin_action(request, "shuttle_sync", f"force={force}")
+        log_admin_action(request, "shuttle.timetable.refresh", f"force={force}")
         updated = await sync_shuttle_timetables(force)
         msg = (
             f"동기화 완료: {', '.join(updated)}"
@@ -178,7 +188,7 @@ class ShuttleAdminView(BaseView):
         place = _opt(form.get("place")) or ""
         if not place or not await delete_timetable(place):
             return self._back(request, msg=f"없는 시간표입니다: {place}")
-        log_admin_action(request, "shuttle_delete", place)
+        log_admin_action(request, "shuttle.timetable.delete", place)
         return self._back(request, msg=f"삭제했습니다: {place}")
 
     async def _save(self, request: Request, form: FormData) -> Response:
@@ -201,5 +211,5 @@ class ShuttleAdminView(BaseView):
             return await self._edit_page(request, submitted, is_new, str(exc))
         # ponytail: 동시 편집은 마지막 저장이 이긴다. 충돌이 문제가 되면 updated_at 낙관적 잠금 추가.
         await save_user_timetable(place, trips, title, updated_by=admin_sub(request))
-        log_admin_action(request, "shuttle_save", place)
+        log_admin_action(request, "shuttle.timetable.put", place)
         return self._back(request, msg=f"저장했습니다: {place}")

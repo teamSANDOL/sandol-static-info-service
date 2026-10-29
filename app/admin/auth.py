@@ -19,6 +19,7 @@ from cryptography.fernet import Fernet, InvalidToken
 from fastapi import APIRouter, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials
 from sqladmin.authentication import AuthenticationBackend
+from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
 from starlette.responses import RedirectResponse, Response
 
@@ -110,7 +111,8 @@ def build_login_redirect() -> Response:
         }
     )
     response = RedirectResponse(
-        f"{expected_issuer()}/protocol/openid-connect/auth?{query}", status_code=302
+        f"{expected_issuer()}/protocol/openid-connect/auth?{query}",
+        status_code=Config.HttpStatus.FOUND,
     )
     cookie = _encrypt(
         {
@@ -189,7 +191,8 @@ class KeycloakAdminAuth(AuthenticationBackend):
     async def logout(self, request: Request) -> Response | bool:
         """세션 쿠키를 지우고 Keycloak 로그아웃으로 보냅니다."""
         response = RedirectResponse(
-            f"{expected_issuer()}/protocol/openid-connect/logout", status_code=302
+            f"{expected_issuer()}/protocol/openid-connect/logout",
+            status_code=Config.HttpStatus.FOUND,
         )
         response.delete_cookie(SESSION_COOKIE, path=Config.ROOT_PATH)
         return response
@@ -214,7 +217,7 @@ async def admin_oauth_callback(
     """Keycloak 로그인 후 관리자 롤을 확인하고 세션 쿠키를 발급합니다."""
     if error:
         logger.warning("관리자 로그인 콜백 오류: %s", error)
-        raise HTTPException(401, "admin_login_failed")
+        raise HTTPException(Config.HttpStatus.UNAUTHORIZED, "admin_login_failed")
     saved = _decrypt(request.cookies.get(STATE_COOKIE))
     if (
         not code
@@ -222,22 +225,27 @@ async def admin_oauth_callback(
         or saved is None
         or not hmac.compare_digest(str(saved.get("state", "")), state)
     ):
-        raise HTTPException(401, "invalid_oauth_state")
+        raise HTTPException(Config.HttpStatus.UNAUTHORIZED, "invalid_oauth_state")
 
     try:
         token = await exchange_code(code, str(saved.get("code_verifier", "")))
         access_token = str(token["access_token"])
     except (httpx.HTTPError, KeyError, ValueError) as exc:
         logger.warning("관리자 토큰 교환 실패: %s", type(exc).__name__)
-        raise HTTPException(401, "admin_token_exchange_failed") from exc
+        raise HTTPException(
+            Config.HttpStatus.UNAUTHORIZED, "admin_token_exchange_failed"
+        ) from exc
 
     # 쓰기 API와 같은 검증(JWKS 서명, iss, realm role)을 그대로 쓴다.
-    sub = require_admin(
-        HTTPAuthorizationCredentials(scheme="Bearer", credentials=access_token)
+    # require_admin은 PyJWKClient의 동기 HTTP를 쓰므로 이벤트 루프 밖에서 실행한다.
+    sub = await run_in_threadpool(
+        require_admin,
+        HTTPAuthorizationCredentials(scheme="Bearer", credentials=access_token),
     )
 
     response = RedirectResponse(
-        f"{Config.STATIC_INFO_PUBLIC_BASE_URL}/admin/", status_code=302
+        f"{Config.STATIC_INFO_PUBLIC_BASE_URL}/admin/",
+        status_code=Config.HttpStatus.FOUND,
     )
     _set_cookie(
         response,
@@ -248,5 +256,5 @@ async def admin_oauth_callback(
         Config.ADMIN_SESSION_TTL_SECONDS,
     )
     response.delete_cookie(STATE_COOKIE, path=Config.ROOT_PATH)
-    record_audit(sub, "login", "-")
+    record_audit(sub, "admin.login", "-")
     return response

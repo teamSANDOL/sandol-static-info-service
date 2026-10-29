@@ -14,7 +14,7 @@ from app.routers import (
     organization_router,
     tuk_world_router,
 )
-from app.config.config import logger
+from app.config import Config, logger
 from app.jobs.scheduler import start_scheduler, stop_scheduler
 from app.utils.shuttle_timetable import sync_shuttle_timetables
 
@@ -38,7 +38,7 @@ async def lifespan(app: FastAPI):
 
 
 # lifespan 적용
-app = FastAPI(lifespan=lifespan, root_path="/static-info")
+app = FastAPI(lifespan=lifespan, root_path=Config.ROOT_PATH)
 app.include_router(bus_router)
 app.include_router(meal_router)
 app.include_router(organization_router)

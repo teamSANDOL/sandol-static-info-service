@@ -6,6 +6,7 @@
 
 from typing import Any
 
+import anyio
 from markupsafe import Markup, escape
 from sqladmin import ModelView
 from sqladmin.filters import AllUniqueStringValuesFilter
@@ -153,18 +154,34 @@ class RestaurantImageAdmin(ModelView, model=RestaurantImage):
         if not isinstance(upload, UploadFile):
             raise ValueError("이미지 파일을 선택하세요.")
         raw = await upload.read(Config.TUK_WORLD_MAX_IMAGE_BYTES + 1)
+        # sqladmin이 이 훅을 이벤트 루프에서 실행하므로 Pillow 검증과 파일 쓰기는
+        # 스레드로 넘긴다.
         try:
-            mime, ext = validate_image(raw, upload.filename, upload.content_type)
+            mime, ext = await anyio.to_thread.run_sync(
+                validate_image, raw, upload.filename, upload.content_type
+            )
         except ImageValidationError as exc:
             raise ValueError(f"이미지 검증 실패: {escape(str(exc))}") from exc
-        model.filename = save_image(raw, ext)
+        model.filename = await anyio.to_thread.run_sync(save_image, raw, ext)
+        request.state.tuk_world_new_file = model.filename
         model.content_type = mime
         model.updated_by = admin_sub(request)
+
+    async def insert_model(self, request: Request, data: dict) -> Any:
+        """저장합니다. sqladmin에는 커밋 실패 훅이 없어 여기서 고아 파일을 지웁니다."""
+        try:
+            return await super().insert_model(request, data)
+        except Exception:
+            filename = getattr(request.state, "tuk_world_new_file", None)
+            if filename:
+                await anyio.to_thread.run_sync(remove_image, filename)
+            raise
 
     async def after_model_change(
         self, data: dict, model: Any, is_created: bool, request: Request
     ) -> None:
-        """감사 로그."""
+        """커밋이 끝났으므로 정리 대상에서 빼고 감사 로그를 남깁니다."""
+        request.state.tuk_world_new_file = None
         log_admin_action(request, "tuk_world.image.upload", f"id={model.id}")
 
     async def on_model_delete(self, model: Any, request: Request) -> None:
