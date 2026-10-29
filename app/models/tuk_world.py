@@ -9,6 +9,11 @@ from app.database import Base
 
 
 def _now() -> datetime:
+    """현재 시각을 UTC로 반환합니다(컬럼 기본값·갱신값용).
+
+    Returns:
+        tz 정보가 붙은 현재 UTC 시각.
+    """
     return datetime.now(UTC)
 
 

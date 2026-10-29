@@ -38,10 +38,20 @@ class OrganizationGroup(BaseModel):
     def add_subunit(
         self, subunit_name: str, subunit: Union["OrganizationUnit", "OrganizationGroup"]
     ):
-        """하위 조직 추가"""
+        """하위 조직 추가
+
+        Args:
+            subunit_name: 하위 조직 이름(키).
+            subunit: 추가할 하위 조직.
+        """
         self.subunits[subunit_name] = subunit
 
     def __iter__(self):
+        """하위 조직을 순서대로 순회합니다.
+
+        Returns:
+            하위 조직 이터레이터.
+        """
         return iter(self.subunits.values())
 
     def as_list(self) -> List[Union["OrganizationUnit", "OrganizationGroup"]]:
@@ -64,7 +74,15 @@ class UniversityStructure(BaseModel):
     def _parse_data(
         cls, name: str, data: Dict
     ) -> Union[OrganizationGroup, OrganizationUnit]:
-        """재귀적으로 데이터를 파싱하여 Pydantic 모델로 변환"""
+        """재귀적으로 데이터를 파싱하여 Pydantic 모델로 변환
+
+        Args:
+            name: 이 노드의 이름.
+            data: 이 노드의 JSON 값. phone/url이 있으면 Unit, 아니면 Group으로 본다.
+
+        Returns:
+            변환된 조직 노드.
+        """
         if "phone" in data or "url" in data:
             return OrganizationUnit(
                 name=name, phone=data.get("phone"), url=data.get("url")
@@ -143,7 +161,15 @@ class UniversityStructure(BaseModel):
     def _search_by_name(
         self, node: Union[OrganizationGroup, OrganizationUnit], query: str
     ) -> List[Union[OrganizationUnit, OrganizationGroup]]:
-        """이름 기반 전체 검색 (트리 순회)"""
+        """이름 기반 전체 검색 (트리 순회)
+
+        Args:
+            node: 탐색을 시작할 노드.
+            query: 찾을 조직 이름.
+
+        Returns:
+            이름이 일치하는 모든 노드.
+        """
         results = []
         if node.name == query:
             results.append(node)
@@ -161,13 +187,17 @@ def get_tukorea_structure() -> UniversityStructure:
 
 
 def parse_school_info(text: str) -> tuple[dict[str, Any], UniversityStructure]:
-    """편집 텍스트를 검증합니다. 기존 로더가 읽을 수 없으면 ValueError.
+    """편집 텍스트를 검증합니다.
 
     Args:
         text: 조직도 JSON 원문.
 
     Returns:
         (파싱된 dict, 로더가 만든 구조) 튜플.
+
+    Raises:
+        ValueError: JSON 문법 오류이거나, 최상위가 비어 있는 객체가 아니거나,
+            기존 로더가 읽을 수 없는 구조일 때.
     """
     try:
         data = json.loads(text)
@@ -182,7 +212,15 @@ def parse_school_info(text: str) -> tuple[dict[str, Any], UniversityStructure]:
 
 
 def _atomic_write(path: str, text: str) -> None:
-    """같은 디렉터리의 임시 파일에 쓴 뒤 os.replace로 교체합니다."""
+    """같은 디렉터리의 임시 파일에 쓴 뒤 os.replace로 교체합니다.
+
+    Args:
+        path: 최종 파일 경로.
+        text: 쓸 내용.
+
+    Raises:
+        BaseException: 쓰기가 실패하면 임시 파일을 지우고 원래 예외를 다시 올린다.
+    """
     fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path) or ".", suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
@@ -197,8 +235,16 @@ def _atomic_write(path: str, text: str) -> None:
 def save_school_info(text: str, path: str, updated_by: str | None) -> None:
     """검증 후 조직도를 원자적으로 저장합니다. 직전 파일은 `<path>.bak` 1개만 보관.
 
-    잘못된 입력이면 ValueError, 쓰기 실패(읽기 전용 등)면 OSError이며
-    두 경우 모두 기존 파일은 그대로입니다.
+    저장에 실패해도 기존 파일은 그대로입니다. 메타 파일 저장 실패는 무시합니다.
+
+    Args:
+        text: 조직도 JSON 원문.
+        path: 조직도 파일 경로.
+        updated_by: 저장한 관리자 sub.
+
+    Raises:
+        ValueError: 입력이 검증을 통과하지 못했을 때.
+        OSError: 쓰기 실패(읽기 전용 등).
     """
     data, _ = parse_school_info(text)
     if os.path.exists(path):
@@ -215,7 +261,14 @@ def save_school_info(text: str, path: str, updated_by: str | None) -> None:
 
 
 def read_school_info_meta(path: str) -> dict[str, Any]:
-    """마지막 저장 메타(updated_by, updated_at). 없으면 빈 dict."""
+    """마지막 저장 메타(updated_by, updated_at). 없으면 빈 dict.
+
+    Args:
+        path: 조직도 파일 경로.
+
+    Returns:
+        메타 dict. 파일이 없거나 읽을 수 없으면 빈 dict.
+    """
     try:
         with open(path + ".meta.json", encoding="utf-8") as f:
             meta = json.load(f)

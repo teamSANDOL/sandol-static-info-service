@@ -92,7 +92,12 @@ def check_parser_helpers():
     # 장소가 하나뿐인 조각은 방향으로 확정하지 않는다
     assert _canon_direction("본교↔") is None
     # 확정된 방향은 전부 상수 표에 있어야 한다
-    for h in ("본교 ⇒ 2캠퍼스", "정왕역⇒본교⇒2캠퍼스", "정왕역 ↔ 제2캠퍼스", "2캠퍼스⇒본교⇒정왕역"):
+    for h in (
+        "본교 ⇒ 2캠퍼스",
+        "정왕역⇒본교⇒2캠퍼스",
+        "정왕역 ↔ 제2캠퍼스",
+        "2캠퍼스⇒본교⇒정왕역",
+    ):
         assert _canon_direction(h) in SHUTTLE_DIRECTIONS
     assert _day_type("『정왕역 ↔ 한국공대 본교』시간표 (평일)") == "평일"
     # 제목에 운행일이 없으면 본문에서 찾는다
@@ -128,7 +133,9 @@ def check_user_override():
     """사용자 수정본은 ingest가 건드리지 않고, force=True일 때만 덮어씁니다."""
     parsed_trip = ParsedTrip(**PARSED[0])
     asyncio.run(
-        st.save_user_timetable("사용자수정", [parsed_trip], "직접 제목", updated_by="sub-1")
+        st.save_user_timetable(
+            "사용자수정", [parsed_trip], "직접 제목", updated_by="sub-1"
+        )
     )
     store = st.load_store()
     assert store["사용자수정"]["source"] == "user"
@@ -156,7 +163,9 @@ def check_sync():
         assert asyncio.run(st.sync_shuttle_timetables()) == ["A"]
     with patch.object(st, "ingest_shuttle_pdf", AsyncMock(return_value=None)):
         assert asyncio.run(st.sync_shuttle_timetables()) == []
-    with patch.object(st, "ingest_shuttle_pdf", AsyncMock(side_effect=RuntimeError("boom"))):
+    with patch.object(
+        st, "ingest_shuttle_pdf", AsyncMock(side_effect=RuntimeError("boom"))
+    ):
         assert asyncio.run(st.sync_shuttle_timetables()) == []
 
 
@@ -174,7 +183,9 @@ def check_fetch_pdf():
         return "<rawfiles/>"
 
     with (
-        patch("app.utils.shuttle_timetable.BookDownloader.fetch_file_list", fake_file_list),
+        patch(
+            "app.utils.shuttle_timetable.BookDownloader.fetch_file_list", fake_file_list
+        ),
         patch(
             "app.utils.shuttle_timetable.BookDownloader.get_file_url",
             lambda self, _: "https://x/a.pdf",
@@ -190,22 +201,40 @@ def check_date_filter_and_dedupe():
     """query_trips의 날짜 필터 + (기간·방향·운행일·시각) 기준 dedupe."""
     always = trip("본교 → 정왕역", "평일", "07:00")  # 기간 표기 없음 → 상시
     summer_normal = trip(
-        "본교 → 정왕역", "평일", "08:00",
-        valid_from="08-25", valid_to="08-31", period_note="정상근무",
+        "본교 → 정왕역",
+        "평일",
+        "08:00",
+        valid_from="08-25",
+        valid_to="08-31",
+        period_note="정상근무",
     )
     summer_short = trip(
-        "본교 → 정왕역", "평일", "08:00",
-        valid_from="07-01", valid_to="07-13", period_note="단축근무",
+        "본교 → 정왕역",
+        "평일",
+        "08:00",
+        valid_from="07-01",
+        valid_to="07-13",
+        period_note="단축근무",
     )
     winter_break = trip(
-        "본교 → 정왕역", "평일", "23:00",
-        valid_from="12-20", valid_to="02-28", period_note="겨울방학",
+        "본교 → 정왕역",
+        "평일",
+        "23:00",
+        valid_from="12-20",
+        valid_to="02-28",
+        period_note="겨울방학",
     )
-    summer_normal_dup = summer_normal.model_copy(update={"period_note": "정상근무(통합)"})
+    summer_normal_dup = summer_normal.model_copy(
+        update={"period_note": "정상근무(통합)"}
+    )
 
     store = {
-        "개별표": {"trips": [t.model_dump() for t in [always, summer_normal, winter_break]]},
-        "통합표": {"trips": [t.model_dump() for t in [summer_normal_dup, summer_short]]},
+        "개별표": {
+            "trips": [t.model_dump() for t in [always, summer_normal, winter_break]]
+        },
+        "통합표": {
+            "trips": [t.model_dump() for t in [summer_normal_dup, summer_short]]
+        },
     }
 
     in_range = st.query_trips(store, on_date=date(2026, 8, 27))
@@ -220,7 +249,8 @@ def check_date_filter_and_dedupe():
 
     short_range = st.query_trips(store, on_date=date(2026, 7, 5))
     assert any(
-        t["departure_time"] == "08:00" and t["period_note"] == "단축근무" for t in short_range
+        t["departure_time"] == "08:00" and t["period_note"] == "단축근무"
+        for t in short_range
     )
     assert not any(t["period_note"] == "정상근무" for t in short_range)
 
@@ -247,7 +277,9 @@ def run():
     # 저장 → 조회 전 구간
     with (
         patch.object(st, "fetch_shuttle_pdf", _fetch()),
-        patch.object(st, "parse_shuttle_pdf", return_value=("2학기 셔틀버스 시간표", PARSED)),
+        patch.object(
+            st, "parse_shuttle_pdf", return_value=("2학기 셔틀버스 시간표", PARSED)
+        ),
     ):
         doc = asyncio.run(st.ingest_shuttle_pdf())
     assert len(doc["trips"]) == 2

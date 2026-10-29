@@ -27,6 +27,16 @@ _VIEWS = [
 
 
 def _load_views() -> list[type]:
+    """_VIEWS에 등록된 관리자 뷰 클래스를 import해 모읍니다.
+
+    모듈 자체가 없으면 건너뛰고, 모듈 안의 import 오류는 그대로 올립니다.
+
+    Returns:
+        등록할 뷰 클래스 목록.
+
+    Raises:
+        ModuleNotFoundError: 뷰 모듈이 아니라 그 안에서 import한 모듈이 없을 때.
+    """
     views: list[type] = []
     for module_name, attr in _VIEWS:
         try:

@@ -44,7 +44,7 @@ def test_baseline_only_db_gets_new_columns_and_keeps_rows(engine: Engine) -> Non
     with engine.begin() as conn:
         conn.execute(
             text(
-                f"INSERT INTO {RESTAURANT} (id, name, latitude, longitude, "
+                "INSERT INTO tuk_world_restaurant (id, name, latitude, longitude, "
                 "created_at, updated_at) VALUES (1, 'a', 1, 2, '2026-01-01', "
                 "'2026-01-01')"
             )
@@ -53,7 +53,9 @@ def test_baseline_only_db_gets_new_columns_and_keeps_rows(engine: Engine) -> Non
     assert {"category", "address", "updated_by"} <= _cols(engine, RESTAURANT)
     assert "admin_audit_log" in inspect(engine).get_table_names()
     with engine.connect() as conn:
-        row = conn.execute(text(f"SELECT name, category FROM {RESTAURANT}")).one()
+        row = conn.execute(
+            text("SELECT name, category FROM tuk_world_restaurant")
+        ).one()
     assert tuple(row) == ("a", None)
 
 

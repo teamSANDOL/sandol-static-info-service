@@ -76,6 +76,13 @@ def to_out(request: Request, restaurant: Restaurant) -> RestaurantOut:
 def get_restaurant_or_404(db: Session, restaurant_id: int) -> Restaurant:
     """식당을 id로 조회합니다.
 
+    Args:
+        db: DB 세션.
+        restaurant_id: 식당 id.
+
+    Returns:
+        조회된 식당.
+
     Raises:
         HTTPException: 식당이 없으면 404.
     """
@@ -87,6 +94,13 @@ def get_restaurant_or_404(db: Session, restaurant_id: int) -> Restaurant:
 
 def get_image_or_404(db: Session, image_id: int) -> RestaurantImage:
     """이미지 레코드를 id로 조회합니다.
+
+    Args:
+        db: DB 세션.
+        image_id: 이미지 id.
+
+    Returns:
+        조회된 이미지 레코드.
 
     Raises:
         HTTPException: 이미지가 없으면 404.
@@ -164,6 +178,10 @@ def update_restaurant(
 def delete_restaurant(db: Session, restaurant_id: int) -> None:
     """식당과 그 이미지 레코드를 지우고, 커밋 뒤 이미지 파일도 지웁니다.
 
+    Args:
+        db: DB 세션.
+        restaurant_id: 삭제할 식당 id.
+
     Raises:
         HTTPException: 식당이 없으면 404.
     """
@@ -175,7 +193,7 @@ def delete_restaurant(db: Session, restaurant_id: int) -> None:
         remove_image(name)
 
 
-def add_image(
+def add_image(  # noqa: PLR0913 - 업로드 파일의 구성 요소를 그대로 받는다
     db: Session,
     restaurant_id: int,
     data: bytes,
@@ -224,6 +242,11 @@ def add_image(
 
 def delete_image(db: Session, image_id: int, admin: str) -> None:
     """이미지 레코드를 지우고 소속 식당의 수정 정보를 갱신한 뒤 파일을 지웁니다.
+
+    Args:
+        db: DB 세션.
+        image_id: 삭제할 이미지 id.
+        admin: 수정자 Keycloak sub.
 
     Raises:
         HTTPException: 이미지가 없으면 404.

@@ -30,7 +30,18 @@ class OrganizationAdminView(BaseView):
         error: str | None = None,
         message: str | None = None,
     ) -> Response:
-        """text가 None이면 현재 파일을 읽어 보여 줍니다."""
+        """조직도 편집 화면을 렌더링합니다.
+
+        Args:
+            request: 현재 요청.
+            text: 편집기에 채울 JSON 원문. None이면 현재 파일을 읽어 보여 준다.
+            status: 응답 상태 코드.
+            error: 화면에 표시할 오류 메시지.
+            message: 화면에 표시할 안내 메시지.
+
+        Returns:
+            템플릿 응답.
+        """
         if text is None:
             try:
                 with open(Config.SCHOOL_INFO_PATH, encoding="utf-8") as f:

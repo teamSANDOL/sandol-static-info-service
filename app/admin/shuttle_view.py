@@ -43,12 +43,27 @@ _BLANK_ROWS = 5
 
 
 def _opt(value: object) -> str | None:
+    """값을 문자열로 바꿔 공백을 자르고, 비면 None으로 만듭니다.
+
+    Args:
+        value: 폼 값.
+
+    Returns:
+        공백을 제거한 문자열 또는 None.
+    """
     text = str(value or "").strip()
     return text or None
 
 
 def form_rows(form: FormData) -> list[dict]:
-    """편집 폼의 행(t-{i}-필드)을 원본 dict로 모읍니다. 빈 행·삭제 체크 행은 뺍니다."""
+    """편집 폼의 행(t-{i}-필드)을 원본 dict로 모읍니다. 빈 행·삭제 체크 행은 뺍니다.
+
+    Args:
+        form: 제출된 폼.
+
+    Returns:
+        출발 시각이 있는 행들의 dict 목록.
+    """
     count = str(form.get("rows") or "")
     rows = []
     for i in range(min(int(count), 2000) if count.isdigit() else 0):
@@ -61,6 +76,12 @@ def form_rows(form: FormData) -> list[dict]:
 
 def parse_trips(rows: list[dict]) -> list[ParsedTrip]:
     """form_rows 결과를 검증해 ParsedTrip 목록으로 바꿉니다.
+
+    Args:
+        rows: form_rows가 만든 행 목록.
+
+    Returns:
+        검증을 통과한 ParsedTrip 목록.
 
     Raises:
         ValueError: 시각·기간 형식이 틀리거나 방향·운행일이 허용값이 아닐 때.
@@ -90,6 +111,17 @@ class ShuttleAdminView(BaseView):
 
     def _back(self, request: Request, **params: str) -> Response:
         # 게이트웨이가 X-Forwarded-Proto를 넘기지 않으므로 절대 URL 대신 경로로 보낸다.
+        """시간표 목록 화면으로 303 리다이렉트합니다.
+
+        게이트웨이가 X-Forwarded-Proto를 넘기지 않으므로 절대 URL 대신 경로로 보낸다.
+
+        Args:
+            request: 현재 요청.
+            **params: 쿼리 문자열로 붙일 값(예: msg).
+
+        Returns:
+            리다이렉트 응답.
+        """
         path = request.url_for("admin:shuttle").path
         query = f"?{urlencode(params)}" if params else ""
         return RedirectResponse(path + query, status_code=Config.HttpStatus.SEE_OTHER)
@@ -101,6 +133,17 @@ class ShuttleAdminView(BaseView):
         status_code: int = Config.HttpStatus.OK,
         **ctx: object,
     ) -> Response:
+        """셔틀 관리 템플릿을 렌더링합니다.
+
+        Args:
+            request: 현재 요청.
+            template: 템플릿 경로.
+            status_code: 응답 상태 코드.
+            **ctx: 템플릿에 넘길 추가 값.
+
+        Returns:
+            템플릿 응답.
+        """
         response = await self.templates.TemplateResponse(
             request,
             template,
@@ -121,7 +164,17 @@ class ShuttleAdminView(BaseView):
         is_new: bool,
         error: str | None = None,
     ) -> Response:
-        """doc은 place·title·trips를 가진 시간표 문서(또는 폼에서 다시 모은 값)."""
+        """시간표 편집 화면을 렌더링합니다.
+
+        Args:
+            request: 현재 요청.
+            doc: place·title·trips를 가진 시간표 문서(또는 폼에서 다시 모은 값).
+            is_new: 새 시간표 작성 화면이면 True.
+            error: 표시할 오류 메시지. 있으면 400으로 응답한다.
+
+        Returns:
+            템플릿 응답.
+        """
         extra = request.query_params.get("extra", "")
         blanks = int(extra) if extra.isdigit() else _BLANK_ROWS
         return await self._render(
@@ -156,6 +209,14 @@ class ShuttleAdminView(BaseView):
         return await self._render(request, "admin/shuttle_list.html", docs=docs)
 
     async def _post(self, request: Request) -> Response:
+        """POST 요청을 CSRF 검증 후 action 필드에 따라 분기합니다.
+
+        Args:
+            request: 현재 요청.
+
+        Returns:
+            action 처리 결과. CSRF 불일치면 403, 알 수 없는 action이면 400.
+        """
         form = await request.form()
         if not verify_csrf(request, _opt(form.get("csrf_token"))):
             return Response(
@@ -174,6 +235,15 @@ class ShuttleAdminView(BaseView):
         return await handler(request, form)
 
     async def _sync(self, request: Request, form: FormData) -> Response:
+        """iBook PDF 동기화를 실행하고 결과 메시지와 함께 목록으로 돌아갑니다.
+
+        Args:
+            request: 현재 요청.
+            form: 제출된 폼(force 체크 여부를 읽는다).
+
+        Returns:
+            목록 화면으로의 리다이렉트.
+        """
         force = bool(form.get("force"))
         log_admin_action(request, "shuttle.timetable.refresh", f"force={force}")
         updated = await sync_shuttle_timetables(force)
@@ -185,6 +255,15 @@ class ShuttleAdminView(BaseView):
         return self._back(request, msg=msg)
 
     async def _delete(self, request: Request, form: FormData) -> Response:
+        """place의 시간표를 삭제합니다.
+
+        Args:
+            request: 현재 요청.
+            form: 제출된 폼(place를 읽는다).
+
+        Returns:
+            목록 화면으로의 리다이렉트.
+        """
         place = _opt(form.get("place")) or ""
         if not place or not await delete_timetable(place):
             return self._back(request, msg=f"없는 시간표입니다: {place}")
@@ -192,6 +271,15 @@ class ShuttleAdminView(BaseView):
         return self._back(request, msg=f"삭제했습니다: {place}")
 
     async def _save(self, request: Request, form: FormData) -> Response:
+        """폼으로 받은 시간표를 검증해 사용자 저장본으로 저장합니다.
+
+        Args:
+            request: 현재 요청.
+            form: 제출된 폼.
+
+        Returns:
+            성공하면 목록 화면으로의 리다이렉트, 검증 실패면 오류가 담긴 편집 화면.
+        """
         place = _opt(form.get("place")) or ""
         is_new = bool(form.get("is_new"))
         title = _opt(form.get("title"))

@@ -20,7 +20,11 @@ _lock = asyncio.Lock()  # ponytail: 파일 단위 락, DB로 옮기기 전까지
 
 
 def load_store() -> dict[str, dict]:
-    """place → 파싱 문서. 파일 없으면 빈 dict."""
+    """저장된 시간표 문서를 읽습니다.
+
+    Returns:
+        place → 파싱 문서. 파일이 없으면 빈 dict.
+    """
     try:
         with open(Config.SHUTTLE_TIMETABLE_PATH, encoding="utf-8") as f:
             return json.load(f)
@@ -29,6 +33,11 @@ def load_store() -> dict[str, dict]:
 
 
 def _save_store(store: dict[str, dict]) -> None:
+    """시간표 저장소를 임시 파일에 쓴 뒤 교체해 원자적으로 저장합니다.
+
+    Args:
+        store: place → 시간표 문서.
+    """
     os.makedirs(Config.DATA_DIR, exist_ok=True)
     tmp = Config.SHUTTLE_TIMETABLE_PATH + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
@@ -57,6 +66,12 @@ async def ingest_shuttle_pdf(force: bool = False) -> dict | None:
 
     - `force`가 아니고 기존 문서가 사용자 수정본(`source == "user"`)이면 덮어쓰지 않습니다.
     - `force`가 아니고 PDF sha256이 기존 문서와 같으면 파싱을 건너뜁니다.
+
+    Args:
+        force: True면 위 두 가드를 모두 무시하고 재파싱한다.
+
+    Returns:
+        저장한 문서. 건너뛰었으면 None.
     """
     place, pdf_url, content = await fetch_shuttle_pdf()
 
@@ -99,7 +114,14 @@ async def ingest_shuttle_pdf(force: bool = False) -> dict | None:
 
 
 async def sync_shuttle_timetables(force: bool = False) -> list[str]:
-    """원본 PDF를 동기화합니다. 갱신된 place 목록을 반환합니다."""
+    """원본 PDF를 동기화합니다. 실패는 로그만 남기고 빈 목록을 반환합니다.
+
+    Args:
+        force: ingest_shuttle_pdf에 그대로 넘긴다.
+
+    Returns:
+        갱신된 place 목록.
+    """
     try:
         doc = await ingest_shuttle_pdf(force=force)
     except Exception:
@@ -118,6 +140,15 @@ async def save_user_timetable(
 
     같은 place 안에서는 수동 입력이 PDF보다 우선합니다(source="user"는 force 없는
     동기화가 덮어쓰지 않음). title은 입력값으로 바꾸고, PDF 출처 필드는 있으면 보존합니다.
+
+    Args:
+        place: 시간표 이름(출처 문서 키).
+        trips: 저장할 출발 목록.
+        title: 문서 제목.
+        updated_by: 저장한 관리자 sub.
+
+    Returns:
+        저장된 문서.
     """
     shuttle_trips = [
         ShuttleTrip(**t.model_dump(), **SHUTTLE_DIRECTIONS[t.direction]) for t in trips
@@ -144,7 +175,14 @@ async def save_user_timetable(
 
 
 async def delete_timetable(place: str) -> bool:
-    """저장된 place 문서를 삭제합니다. 있었으면 True, 없었으면 False."""
+    """저장된 place 문서를 삭제합니다.
+
+    Args:
+        place: 삭제할 시간표 이름.
+
+    Returns:
+        있었으면 True, 없었으면 False.
+    """
     async with _lock:
         store = load_store()
         if place not in store:
@@ -154,6 +192,11 @@ async def delete_timetable(place: str) -> bool:
     return True
 
 
+def _is_md(value: str | None) -> bool:
+    """값이 MM-DD 형식인지 확인합니다."""
+    return value is not None and re.fullmatch(r"\d{2}-\d{2}", value) is not None
+
+
 def _is_valid_on(valid_from: str | None, valid_to: str | None, md: str) -> bool:
     """trip의 운행 기간(MM-DD)에 조회일(md, MM-DD)이 포함되는지 판정.
 
@@ -161,15 +204,19 @@ def _is_valid_on(valid_from: str | None, valid_to: str | None, md: str) -> bool:
     - MM-DD 형식이 아닌 값이 섞이면, 데이터 유실보다 포함시키는 편이 안전하므로 True.
     - valid_from > valid_to면 12-20~02-28처럼 해를 넘기는 구간으로 보고 OR 조건으로 판정.
     - 한쪽만 있으면 그 경계만 검사.
+
+    Args:
+        valid_from: 운행 시작일 MM-DD 또는 None.
+        valid_to: 운행 종료일 MM-DD 또는 None.
+        md: 조회일 MM-DD.
+
+    Returns:
+        조회일이 운행 기간에 포함되면 True.
     """
-
-    def is_md(v: str | None) -> bool:
-        return v is not None and re.fullmatch(r"\d{2}-\d{2}", v) is not None
-
     if valid_from is None and valid_to is None:
         return True
-    if (valid_from is not None and not is_md(valid_from)) or (
-        valid_to is not None and not is_md(valid_to)
+    if (valid_from is not None and not _is_md(valid_from)) or (
+        valid_to is not None and not _is_md(valid_to)
     ):
         return True
     if valid_from is not None and valid_to is not None:
@@ -196,6 +243,18 @@ def query_trips(
     include_all이 아니면 on_date(없으면 오늘, KST) 기준으로 유효한 trip만 남기고,
     (day_type, direction, departure_time, departure_time_end, valid_from, valid_to) 기준으로
     중복을 제거합니다.
+
+    Args:
+        store: place → 시간표 문서.
+        route: 노선명 부분 일치 필터.
+        day_type: 운행일 구분 필터.
+        origin: 출발지 필터(경유지 포함).
+        destination: 도착지 필터(경유지 포함).
+        on_date: 기준 날짜. None이면 오늘(KST).
+        include_all: True면 운행 기간 필터를 적용하지 않는다.
+
+    Returns:
+        place가 붙은 trip dict 목록.
     """
     md = (on_date or datetime.now(ZoneInfo("Asia/Seoul")).date()).strftime("%m-%d")
     out = []

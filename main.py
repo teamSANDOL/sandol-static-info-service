@@ -21,7 +21,14 @@ from app.utils.shuttle_timetable import sync_shuttle_timetables
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """FastAPI의 lifespan 이벤트 핸들러"""
+    """FastAPI의 lifespan 이벤트 핸들러. 기동 시 디렉터리·스케줄러·1회 동기화를 준비합니다.
+
+    Args:
+        app: FastAPI 앱(사용하지 않음).
+
+    Yields:
+        앱이 실행되는 동안 제어를 넘긴다.
+    """
     logger.info("🚀 서비스 시작:")
     init_db()
     start_scheduler()

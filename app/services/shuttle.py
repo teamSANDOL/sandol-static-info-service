@@ -26,7 +26,7 @@ _SOURCE_FIELDS = (
 _background: set[asyncio.Task[list[str]]] = set()  # create_task 결과가 GC되지 않게 보관
 
 
-def build_timetable_response(
+def build_timetable_response(  # noqa: PLR0913 - 쿼리 파라미터를 그대로 받는다
     route: str | None,
     day_type: DayType | None,
     origin: str | None,

@@ -53,15 +53,35 @@ def admin_configured() -> bool:
 
 
 def _fernet() -> Fernet:
+    """세션 쿠키 암호화에 쓰는 Fernet 인스턴스를 만듭니다.
+
+    Returns:
+        ADMIN_SESSION_KEY로 만든 Fernet.
+    """
     return Fernet(Config.ADMIN_SESSION_KEY)
 
 
 def _encrypt(data: dict) -> str:
+    """dict를 JSON으로 직렬화해 Fernet으로 암호화합니다.
+
+    Args:
+        data: 쿠키에 담을 값.
+
+    Returns:
+        쿠키 문자열.
+    """
     return _fernet().encrypt(json.dumps(data).encode()).decode()
 
 
 def _decrypt(raw: str | None) -> dict | None:
-    """쿠키를 복호화합니다. 없거나 위조·만료면 None."""
+    """쿠키를 복호화합니다. 없거나 위조·만료면 None.
+
+    Args:
+        raw: 쿠키 원문.
+
+    Returns:
+        복호화된 dict. 쿠키가 없거나 위조·만료됐으면 None.
+    """
     if not raw:
         return None
     try:
@@ -74,6 +94,14 @@ def _decrypt(raw: str | None) -> dict | None:
 
 
 def _set_cookie(response: Response, name: str, value: str, max_age: int) -> None:
+    """관리자 화면용 보안 쿠키를 응답에 설정합니다.
+
+    Args:
+        response: 쿠키를 붙일 응답.
+        name: 쿠키 이름.
+        value: 암호화된 쿠키 값.
+        max_age: 유효 시간(초).
+    """
     response.set_cookie(
         name,
         value,
@@ -128,6 +156,13 @@ def build_login_redirect() -> Response:
 async def exchange_code(code: str, code_verifier: str) -> dict:
     """Authorization Code를 토큰으로 교환합니다.
 
+    Args:
+        code: Keycloak이 돌려준 authorization code.
+        code_verifier: PKCE code_verifier.
+
+    Returns:
+        Keycloak 토큰 응답(JSON).
+
     Raises:
         httpx.HTTPError: 네트워크 오류 또는 Keycloak이 4xx/5xx를 반환한 경우.
     """
@@ -158,7 +193,14 @@ def admin_sub(request: Request) -> str | None:
 
 
 def csrf_token(request: Request) -> str:
-    """현재 세션에 묶인 CSRF 토큰. 커스텀 뷰 폼의 hidden 필드에 넣는다."""
+    """현재 세션에 묶인 CSRF 토큰. 커스텀 뷰 폼의 hidden 필드에 넣는다.
+
+    Args:
+        request: 현재 요청(세션 쿠키를 읽는다).
+
+    Returns:
+        세션 쿠키로부터 계산한 HMAC 16진 문자열.
+    """
     raw = request.cookies.get(SESSION_COOKIE, "")
     return hmac.new(
         Config.ADMIN_SESSION_KEY.encode(), raw.encode(), hashlib.sha256
@@ -166,14 +208,28 @@ def csrf_token(request: Request) -> str:
 
 
 def verify_csrf(request: Request, token: str | None) -> bool:
-    """폼으로 받은 CSRF 토큰이 현재 세션 것인지 확인합니다."""
+    """폼으로 받은 CSRF 토큰이 현재 세션 것인지 확인합니다.
+
+    Args:
+        request: 현재 요청(세션 쿠키를 읽는다).
+        token: 폼으로 받은 토큰.
+
+    Returns:
+        세션이 유효하고 토큰이 일치하면 True.
+    """
     if not token or admin_sub(request) is None:
         return False
     return hmac.compare_digest(token, csrf_token(request))
 
 
 def log_admin_action(request: Request, action: str, target: str) -> None:
-    """감사 기록(로그 한 줄 + DB 행). 모든 관리자 뷰가 공유한다."""
+    """감사 기록(로그 한 줄 + DB 행). 모든 관리자 뷰가 공유한다.
+
+    Args:
+        request: 현재 요청(수행자 sub를 세션에서 읽는다).
+        action: `영역.대상.동작` 형식의 작업 이름.
+        target: 대상 식별자.
+    """
     record_audit(admin_sub(request), action, target)
 
 
@@ -214,7 +270,21 @@ async def admin_oauth_callback(
     state: str | None = None,
     error: str | None = None,
 ) -> Response:
-    """Keycloak 로그인 후 관리자 롤을 확인하고 세션 쿠키를 발급합니다."""
+    """Keycloak 로그인 후 관리자 롤을 확인하고 세션 쿠키를 발급합니다.
+
+    Args:
+        request: 현재 요청(state 쿠키를 읽는다).
+        code: Keycloak이 돌려준 authorization code.
+        state: Keycloak이 돌려준 state.
+        error: 로그인 실패 시 Keycloak이 보내는 오류 코드.
+
+    Returns:
+        관리자 화면으로 가는 리다이렉트(세션 쿠키 포함).
+
+    Raises:
+        HTTPException: 로그인 오류·state 불일치·토큰 교환 실패면 401.
+            관리자 롤이 없으면 require_admin이 403을 올린다.
+    """
     if error:
         logger.warning("관리자 로그인 콜백 오류: %s", error)
         raise HTTPException(Config.HttpStatus.UNAUTHORIZED, "admin_login_failed")

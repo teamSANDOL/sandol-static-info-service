@@ -1,3 +1,5 @@
+"""iBook 페이지 이미지를 Accept 헤더에 맞는 응답 형식(json/base64/zip 등)으로 만드는 도구."""
+
 from typing import Union
 from fastapi.responses import (
     JSONResponse,
@@ -5,7 +7,11 @@ from fastapi.responses import (
     PlainTextResponse,
 )
 from fastapi import HTTPException, Request
-import httpx, base64, io, zipfile
+import base64
+import io
+import zipfile
+
+import httpx
 
 from app.config import Config
 
@@ -30,6 +36,9 @@ async def build_response_base64(image_urls: list[str]):
 
     Returns:
         JSONResponse: Base64로 인코딩된 이미지 데이터를 포함한 JSON 응답
+
+    Raises:
+        HTTPException: 이미지 다운로드가 실패하면 502.
     """
     base64_list = []
     async with httpx.AsyncClient() as client:
@@ -58,6 +67,9 @@ async def build_response_zip(image_urls: list[str], file_stem: str = "shuttle"):
 
     Returns:
         StreamingResponse: 이미지들을 포함한 ZIP 파일 스트리밍 응답
+
+    Raises:
+        HTTPException: 이미지 다운로드가 실패하면 502.
     """
     zip_buffer = io.BytesIO()
     async with httpx.AsyncClient() as client:
@@ -89,6 +101,9 @@ async def build_response_octet_stream(
 
     Returns:
         StreamingResponse: 단일 이미지 또는 ZIP 파일 스트리밍 응답
+
+    Raises:
+        HTTPException: 이미지 다운로드가 실패하면 502.
     """
     if len(image_urls) == 1:
         async with httpx.AsyncClient() as client:
@@ -128,6 +143,9 @@ async def build_response_jpeg(image_urls: list[str], file_stem: str = "shuttle")
 
     Returns:
         StreamingResponse: JPEG 이미지 스트리밍 응답
+
+    Raises:
+        HTTPException: 이미지 다운로드가 실패하면 502.
     """
     async with httpx.AsyncClient() as client:
         resp = await client.get(image_urls[0], timeout=10)
@@ -149,11 +167,15 @@ async def build_image_response(
 
     Args:
         image_urls (Union[str, list[str]]): 이미지 URL 또는 URL 리스트
-        response_type (str): 응답 타입 (json, base64, zip, octet-stream, text, jpeg, png)
+        response_type (str): 응답 타입 (json, base64, zip, octet-stream, text, jpeg)
         file_stem (str): 다운로드 파일명 앞부분 (예: shuttle, meal)
 
     Returns:
         Response: 요청된 타입에 따른 FastAPI 응답 객체
+
+    Raises:
+        HTTPException: URL이 비었으면 404, 지원하지 않는 response_type이면 400,
+            이미지 다운로드가 실패하면 502.
     """
     urls = [image_urls] if isinstance(image_urls, str) else image_urls
 

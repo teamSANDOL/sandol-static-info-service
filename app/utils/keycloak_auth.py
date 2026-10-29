@@ -19,6 +19,11 @@ def expected_issuer() -> str:
 
 @lru_cache(maxsize=1)
 def _jwks_client() -> jwt.PyJWKClient:
+    """Keycloak JWKS를 조회하는 PyJWKClient를 만들어 재사용합니다.
+
+    Returns:
+        캐시된 PyJWKClient.
+    """
     url = Config.KC_JWKS_URL or f"{expected_issuer()}/protocol/openid-connect/certs"
     return jwt.PyJWKClient(url, cache_keys=True, lifespan=600, timeout=5)
 
@@ -36,6 +41,12 @@ def require_admin(
     """Bearer 토큰을 검증하고 관리자 롤이 있으면 sub를 반환합니다.
 
     Keycloak 설정이 없으면 fail-closed로 모든 쓰기를 거부합니다.
+
+    Args:
+        credentials: Authorization 헤더의 Bearer 자격 증명.
+
+    Returns:
+        토큰의 sub 클레임.
 
     Raises:
         HTTPException: 미설정(503), 토큰 없음·무효(401), 롤 없음(403).
