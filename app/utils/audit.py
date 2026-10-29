@@ -1,7 +1,10 @@
 """관리자 감사 기록: 로그 한 줄 + admin_audit_log 행(추가 전용)."""
 
 import json
+from functools import partial
 from typing import Any
+
+import anyio
 
 from app.config import logger
 from app.database import SessionLocal
@@ -48,6 +51,30 @@ def record_audit(
         logger.error(
             "admin_audit DB 기록 실패 action=%s target=%s",
             action,
-            target,
+            json.dumps(target, ensure_ascii=False),
             exc_info=True,
         )
+
+
+async def arecord_audit(
+    sub: str | None,
+    action: str,
+    target: str,
+    *,
+    actor_name: str | None = None,
+    detail: dict[str, Any] | None = None,
+) -> None:
+    """record_audit을 스레드로 넘겨 실행합니다. async 핸들러에서 쓰세요.
+
+    동기 SQLite 커밋이 이벤트 루프를 막지 않게 한다. 인자는 record_audit과 같다.
+
+    Args:
+        sub: 수행자 Keycloak sub.
+        action: `영역.대상.동작` 형식의 작업 이름.
+        target: 대상 식별자.
+        actor_name: 수행자 표시 이름(알 수 있을 때만).
+        detail: 대상 식별자와 짧은 요약.
+    """
+    await anyio.to_thread.run_sync(
+        partial(record_audit, sub, action, target, actor_name=actor_name, detail=detail)
+    )

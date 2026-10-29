@@ -44,3 +44,20 @@ def test_audit_view_is_read_only() -> None:
     assert not AuditLogAdmin.can_create
     assert not AuditLogAdmin.can_edit
     assert not AuditLogAdmin.can_delete
+
+
+def test_arecord_audit_runs_off_event_loop(monkeypatch: pytest.MonkeyPatch) -> None:
+    import asyncio
+
+    seen: list[bool] = []
+
+    def spy(*args: object, **kwargs: object) -> None:
+        try:
+            asyncio.get_running_loop()
+            seen.append(True)
+        except RuntimeError:
+            seen.append(False)
+
+    monkeypatch.setattr(audit, "record_audit", spy)
+    asyncio.run(audit.arecord_audit("s", "a.b.c", "t"))
+    assert seen == [False]  # 스레드에는 실행 중인 루프가 없다.

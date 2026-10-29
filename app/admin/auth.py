@@ -24,7 +24,7 @@ from starlette.requests import Request
 from starlette.responses import RedirectResponse, Response
 
 from app.config import Config, logger
-from app.utils.audit import record_audit
+from app.utils.audit import arecord_audit
 from app.utils.keycloak_auth import expected_issuer, require_admin
 
 # kakao-bot 관리자 쿠키(sandol_admin_session)와 같은 도메인을 쓰므로 이름을 구분한다.
@@ -222,7 +222,7 @@ def verify_csrf(request: Request, token: str | None) -> bool:
     return hmac.compare_digest(token, csrf_token(request))
 
 
-def log_admin_action(request: Request, action: str, target: str) -> None:
+async def log_admin_action(request: Request, action: str, target: str) -> None:
     """감사 기록(로그 한 줄 + DB 행). 모든 관리자 뷰가 공유한다.
 
     Args:
@@ -230,7 +230,7 @@ def log_admin_action(request: Request, action: str, target: str) -> None:
         action: `영역.대상.동작` 형식의 작업 이름.
         target: 대상 식별자.
     """
-    record_audit(admin_sub(request), action, target)
+    await arecord_audit(admin_sub(request), action, target)
 
 
 class KeycloakAdminAuth(AuthenticationBackend):
@@ -326,5 +326,5 @@ async def admin_oauth_callback(
         Config.ADMIN_SESSION_TTL_SECONDS,
     )
     response.delete_cookie(STATE_COOKIE, path=Config.ROOT_PATH)
-    record_audit(sub, "admin.login", "-")
+    await arecord_audit(sub, "admin.session.login", "-")
     return response

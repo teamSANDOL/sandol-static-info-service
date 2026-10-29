@@ -21,7 +21,7 @@ from app.schemas.shuttle_responses import (
     TIMETABLE_RESPONSES,
 )
 from app.services import shuttle as service
-from app.utils.audit import record_audit
+from app.utils.audit import arecord_audit
 from app.utils.keycloak_auth import require_admin
 from app.utils.shuttle_timetable import delete_timetable, save_user_timetable
 
@@ -75,7 +75,7 @@ async def refresh_shuttle_timetable(sub: Admin, force: bool = False):
         sub: 관리자 Keycloak sub(인증 의존성이 채운다).
         force: True면 사용자 수정본과 해시 가드를 무시한다.
     """
-    record_audit(sub, "shuttle.timetable.refresh", f"force={force}")
+    await arecord_audit(sub, "shuttle.timetable.refresh", f"force={force}")
     service.queue_sync(force)
     return {"queued": True}
 
@@ -87,7 +87,7 @@ async def put_shuttle_timetable(place: str, body: ParsedTimetable, sub: Admin):
     저장 문서는 source="user"로 표시되어 cron/refresh(force 없이는)가 다시 파싱하지 않습니다.
     """
     doc = await save_user_timetable(place, body.trips, body.title, updated_by=sub)
-    record_audit(sub, "shuttle.timetable.put", place)
+    await arecord_audit(sub, "shuttle.timetable.put", place)
     return doc
 
 
@@ -100,4 +100,4 @@ async def delete_shuttle_timetable(place: str, sub: Admin):
     """place 문서를 삭제합니다. 사용자 수정본을 되돌려 다시 PDF 파싱 대상으로 만들 때 사용합니다."""
     if not await delete_timetable(place):
         raise HTTPException(status_code=Config.HttpStatus.NOT_FOUND)
-    record_audit(sub, "shuttle.timetable.delete", place)
+    await arecord_audit(sub, "shuttle.timetable.delete", place)

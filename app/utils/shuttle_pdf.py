@@ -248,7 +248,7 @@ def _trip(direction, day_type, departure_time, end=None, note=None):
 
 
 def _hour_column(page, words):
-    """ "시간" 머리글 좌우의 세로 괘선으로 시(hour) 열의 x범위를 구합니다.
+    """'시간' 머리글 좌우의 세로 괘선으로 시(hour) 열의 x범위를 구합니다.
 
     Args:
         page: pdfplumber 페이지.
