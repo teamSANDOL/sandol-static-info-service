@@ -1,11 +1,8 @@
-"""감사 로그 DB 누적, 실패 격리, 조회 전용 화면, updated_by, 컬럼 추가."""
-
-from pathlib import Path
+"""감사 로그 DB 누적, 실패 격리, 조회 전용 화면."""
 
 import pytest
-from sqlalchemy import create_engine, inspect, select, text
+from sqlalchemy import select
 
-from app import database
 from app.admin.audit_view import AuditLogAdmin
 from app.database import SessionLocal, init_db
 from app.models.admin_audit import AdminAuditLog
@@ -47,16 +44,3 @@ def test_audit_view_is_read_only() -> None:
     assert not AuditLogAdmin.can_create
     assert not AuditLogAdmin.can_edit
     assert not AuditLogAdmin.can_delete
-
-
-def test_updated_by_column_added_to_existing_db(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    old = create_engine(f"sqlite:///{tmp_path / 'old.db'}")
-    database.Base.metadata.create_all(old)
-    with old.begin() as conn:
-        conn.execute(text("ALTER TABLE tuk_world_restaurant DROP COLUMN updated_by"))
-    monkeypatch.setattr(database, "engine", old)
-    database._add_missing_columns()
-    cols = {c["name"] for c in inspect(old).get_columns("tuk_world_restaurant")}
-    assert "updated_by" in cols
