@@ -24,7 +24,7 @@ from app.schemas.shuttle_responses import (
 from app.services import shuttle as service
 from app.services.shuttle_admin import ensure_force_allowed
 from app.services.shuttle_store import delete_timetable, save_user_timetable
-from app.utils.audit import record_audit
+from app.utils.audit import arecord_audit
 from app.utils.keycloak_auth import require_shuttle_admin, shuttle_admin_identity
 
 Admin = Annotated[str, Depends(require_shuttle_admin)]
@@ -43,6 +43,8 @@ async def get_shuttle_timetable(
     응답에 `ETag: "<version>"`와 `Cache-Control: public, max-age=300`을 붙이고,
     `If-None-Match`가 현재 태그와 같으면 본문 없이 304를 돌려줍니다. date를 생략하면
     태그는 `"<version>-<YYYYMMDD(KST)>"`입니다.
+
+
 
     Args:
         response: 헤더를 붙일 응답.
@@ -72,6 +74,8 @@ async def refresh_shuttle_timetable(
     force=True면 사용자 수정본과 PDF 해시 가드를 모두 무시하고 재파싱합니다
     (사용자 수정본을 덮어쓰는 유일한 경로이며, 명시적으로 호출했을 때만 동작).
 
+
+
     Args:
         identity: (관리자 sub, 롤 목록). 인증 의존성이 채운다.
         force: True면 수정본까지 덮어쓴다(전체 관리자만).
@@ -81,7 +85,7 @@ async def refresh_shuttle_timetable(
     ensure_force_allowed(
         roles, force, "force 동기화(수정본 덮어쓰기)는 전체 관리자만 할 수 있습니다."
     )
-    record_audit(sub, "shuttle.timetable.refresh", f"force={force}")
+    await arecord_audit(sub, "shuttle.timetable.refresh", f"force={force}")
     service.queue_sync(force)
     return {"queued": True}
 
@@ -95,7 +99,7 @@ async def put_shuttle_timetable(place: str, body: ParsedTimetable, sub: Admin):
     doc = await save_user_timetable(
         place, body.trips, body.title, updated_by=sub, notes=body.notes
     )
-    record_audit(sub, "shuttle.timetable.put", place)
+    await arecord_audit(sub, "shuttle.timetable.put", place)
     return doc
 
 
@@ -108,4 +112,4 @@ async def delete_shuttle_timetable(place: str, sub: Admin):
     """place 문서를 삭제합니다. 사용자 수정본을 되돌려 다시 PDF 파싱 대상으로 만들 때 사용합니다."""
     if not await delete_timetable(place):
         raise HTTPException(status_code=Config.HttpStatus.NOT_FOUND)
-    record_audit(sub, "shuttle.timetable.delete", place)
+    await arecord_audit(sub, "shuttle.timetable.delete", place)

@@ -144,7 +144,9 @@ class RestaurantAdmin(ModelView, model=Restaurant):
             request: 현재 요청.
         """
         action = "create" if is_created else "update"
-        log_admin_action(request, f"tuk_world.restaurant.{action}", f"id={model.id}")
+        await log_admin_action(
+            request, f"tuk_world.restaurant.{action}", f"id={model.id}"
+        )
 
     async def on_model_delete(self, model: Any, request: Request) -> None:
         """커밋 전에 지울 파일명을 모아 둡니다.
@@ -168,7 +170,7 @@ class RestaurantAdmin(ModelView, model=Restaurant):
         """
         for filename in request.state.tuk_world_files:
             remove_image(filename)
-        log_admin_action(request, "tuk_world.restaurant.delete", f"id={model.id}")
+        await log_admin_action(request, "tuk_world.restaurant.delete", f"id={model.id}")
 
 
 class RestaurantImageAdmin(ModelView, model=RestaurantImage):
@@ -273,7 +275,7 @@ class RestaurantImageAdmin(ModelView, model=RestaurantImage):
             request: 현재 요청.
         """
         request.state.tuk_world_new_file = None
-        log_admin_action(request, "tuk_world.image.upload", f"id={model.id}")
+        await log_admin_action(request, "tuk_world.image.upload", f"id={model.id}")
 
     async def on_model_delete(self, model: Any, request: Request) -> None:
         """커밋 전에 파일명을 보관합니다.
@@ -292,7 +294,7 @@ class RestaurantImageAdmin(ModelView, model=RestaurantImage):
             request: 현재 요청.
         """
         remove_image(request.state.tuk_world_file)
-        log_admin_action(request, "tuk_world.image.delete", f"id={model.id}")
+        await log_admin_action(request, "tuk_world.image.delete", f"id={model.id}")
 
 
 TukWorldAdmin = [RestaurantAdmin, RestaurantImageAdmin]

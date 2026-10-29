@@ -247,7 +247,7 @@ class ShuttleAdminView(BaseView):
             목록 화면으로의 리다이렉트.
         """
         force = bool(form.get("force"))
-        log_admin_action(request, "shuttle.timetable.refresh", f"force={force}")
+        await log_admin_action(request, "shuttle.timetable.refresh", f"force={force}")
         updated = await sync_shuttle_timetables(force)
         msg = (
             f"동기화 완료: {', '.join(updated)}"
@@ -269,7 +269,7 @@ class ShuttleAdminView(BaseView):
         place = _opt(form.get("place")) or ""
         if not place or not await delete_timetable(place):
             return self._back(request, msg=f"없는 시간표입니다: {place}")
-        log_admin_action(request, "shuttle.timetable.delete", place)
+        await log_admin_action(request, "shuttle.timetable.delete", place)
         return self._back(request, msg=f"삭제했습니다: {place}")
 
     async def _save(self, request: Request, form: FormData) -> Response:
@@ -301,5 +301,5 @@ class ShuttleAdminView(BaseView):
             return await self._edit_page(request, submitted, is_new, str(exc))
         # ponytail: 동시 편집은 마지막 저장이 이긴다. 충돌이 문제가 되면 updated_at 낙관적 잠금 추가.
         await save_user_timetable(place, trips, title, updated_by=admin_sub(request))
-        log_admin_action(request, "shuttle.timetable.put", place)
+        await log_admin_action(request, "shuttle.timetable.put", place)
         return self._back(request, msg=f"저장했습니다: {place}")

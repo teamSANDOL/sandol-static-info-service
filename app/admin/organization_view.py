@@ -110,7 +110,7 @@ class OrganizationAdminView(BaseView):
                 Config.HttpStatus.OK,
                 error=f"저장하지 못했습니다(쓰기 불가 경로일 수 있음): {exc}",
             )
-        log_admin_action(
+        await log_admin_action(
             request, "organization.school_info.save", Config.SCHOOL_INFO_PATH
         )
         return await self._render(request, message="저장했습니다.")
