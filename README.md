@@ -57,12 +57,24 @@ docker compose down
 
 ```bash
 pip install -r requirements.txt
+alembic upgrade head
 uvicorn main:app --host 0.0.0.0 --port 5600 --reload
 ```
 
 - 로컬 기본 주소: `http://localhost:5600`
 - health: `http://localhost:5600/health`
 - OpenAPI 문서: `http://localhost:5600/docs`
+
+## DB 마이그레이션 (Alembic)
+
+TUK World·감사 로그 SQLite 스키마는 Alembic이 관리한다.
+
+- 컨테이너는 기동할 때 `alembic upgrade head`를 먼저 실행한다(멱등).
+- 예전에 `create_all`로 만들어져 `alembic_version`이 없는 기존 DB도 그대로 올라간다.
+  이미 있는 테이블·컬럼·인덱스는 건너뛰고 버전만 기록한다.
+- 로컬에서는 서버 실행 전에 `alembic upgrade head`를 한 번 실행한다.
+- 모델에 컬럼·테이블을 추가하면 `alembic/versions/`에 새 리비전을 추가한다
+  (`alembic revision -m "설명"`). 리비전은 inspector로 존재 여부를 확인하는 멱등 형태로 쓴다.
 
 ## 셔틀 시간표 파이프라인
 

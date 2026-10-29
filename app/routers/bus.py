@@ -45,6 +45,14 @@ async def get_shuttle_timetable(
 
     기본은 오늘(KST) 기준 운행 기간(valid_from/valid_to)에 해당하는 trip만 반환합니다.
     date 쿼리로 다른 날짜를 기준으로 조회하거나, all=true로 기간 필터 없이 전체를 조회할 수 있습니다.
+
+    Args:
+        route: 노선명 부분 일치 필터.
+        day_type: 운행일 구분 필터.
+        origin: 출발지 필터(경유지 포함).
+        destination: 도착지 필터(경유지 포함).
+        date: 기준 날짜(기본 오늘, KST).
+        include_all: all=true면 운행 기간 필터를 쓰지 않는다.
     """
     return service.build_timetable_response(
         route, day_type, origin, destination, date, include_all
@@ -62,6 +70,10 @@ async def refresh_shuttle_timetable(sub: Admin, force: bool = False):
     PDF 파싱은 빠르지만 다운로드가 느릴 수 있어 백그라운드로 돌립니다.
     force=True면 사용자 수정본과 PDF 해시 가드를 모두 무시하고 재파싱합니다
     (사용자 수정본을 덮어쓰는 유일한 경로이며, 명시적으로 호출했을 때만 동작).
+
+    Args:
+        sub: 관리자 Keycloak sub(인증 의존성이 채운다).
+        force: True면 사용자 수정본과 해시 가드를 무시한다.
     """
     record_audit(sub, "shuttle.timetable.refresh", f"force={force}")
     service.queue_sync(force)

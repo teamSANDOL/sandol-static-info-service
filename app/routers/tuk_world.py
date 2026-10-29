@@ -126,6 +126,7 @@ def upload_image(
     file: Annotated[UploadFile, File(description="JPEG/PNG/WEBP 이미지 1장")],
 ) -> RestaurantOut:
     """이미지 1장을 검증 후 저장합니다. 저장 파일명은 서버가 생성합니다."""
+    service.get_restaurant_or_404(db, restaurant_id)  # 없는 식당이면 읽기 전에 404
     data = file.file.read(Config.TUK_WORLD_MAX_IMAGE_BYTES + 1)
     restaurant = service.add_image(
         db, restaurant_id, data, file.filename, file.content_type, admin

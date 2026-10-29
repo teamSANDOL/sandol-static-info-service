@@ -287,3 +287,25 @@ def test_updated_by_and_audit_rows_recorded() -> None:
         ).all()
         assert "tuk_world.restaurant.create" in actions
         assert db.scalars(select(RestaurantImage)).first() is not None
+
+
+def test_upload_to_missing_restaurant_404_before_reading(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.routers import tuk_world as router_module
+
+    reads: list[str] = []
+
+    class SpyConfig:
+        def __getattr__(self, name: str) -> Any:
+            if name == "TUK_WORLD_MAX_IMAGE_BYTES":
+                reads.append(name)
+            return getattr(Config, name)
+
+    monkeypatch.setattr(router_module, "Config", SpyConfig())
+    res = client.post(
+        "/tuk-world/restaurants/999999/images",
+        files={"file": ("a.png", b"x", "image/png")},
+        headers=ADMIN,
+    )
+    assert res.status_code == 404 and reads == []
