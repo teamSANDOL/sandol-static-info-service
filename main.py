@@ -15,14 +15,21 @@ from app.routers import (
     shuttle_admin_router,
     tuk_world_router,
 )
-from app.config.config import logger
+from app.config import Config, logger
 from app.jobs.scheduler import start_scheduler, stop_scheduler
-from app.utils.shuttle_timetable import sync_shuttle_timetables
+from app.services.shuttle_sync import sync_shuttle_timetables
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """FastAPI의 lifespan 이벤트 핸들러"""
+    """FastAPI의 lifespan 이벤트 핸들러. 기동 시 디렉터리·스케줄러·1회 동기화를 준비합니다.
+
+    Args:
+        app: FastAPI 앱(사용하지 않음).
+
+    Yields:
+        앱이 실행되는 동안 제어를 넘긴다.
+    """
     logger.info("🚀 서비스 시작:")
     init_db()
     start_scheduler()
@@ -39,7 +46,7 @@ async def lifespan(app: FastAPI):
 
 
 # lifespan 적용
-app = FastAPI(lifespan=lifespan, root_path="/static-info")
+app = FastAPI(lifespan=lifespan, root_path=Config.ROOT_PATH)
 app.include_router(bus_router)
 app.include_router(shuttle_admin_router)
 app.include_router(meal_router)

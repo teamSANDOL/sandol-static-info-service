@@ -9,8 +9,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.config import Config
-from app.routers import bus
-from app.utils import shuttle_timetable as st
+from app.services import shuttle as shuttle_service
+from app.services import shuttle_schedule as sch
+from app.services import shuttle_store as sto
+from app.services import shuttle_sync as syn
 from main import app
 
 PDF = Path(__file__).parent / "fixtures" / "shuttle_2026_2nd.pdf"
@@ -31,8 +33,8 @@ def _ingest(monkeypatch: pytest.MonkeyPatch, content: bytes | None = None) -> An
     fetch = AsyncMock(
         return_value=(PLACE, "https://x/shuttle.pdf", content or PDF.read_bytes())
     )
-    monkeypatch.setattr(st, "fetch_shuttle_pdf", fetch)
-    return asyncio.run(st.ingest_shuttle_pdf())
+    monkeypatch.setattr(syn, "fetch_shuttle_pdf", fetch)
+    return asyncio.run(syn.ingest_shuttle_pdf())
 
 
 def _dirs(body: dict) -> dict[str, dict]:
@@ -132,19 +134,19 @@ def test_validation_rules(monkeypatch: pytest.MonkeyPatch) -> None:
     good = _ingest(monkeypatch)
     trips = good["trips"]
     assert "problems" not in good and "pending" not in good
-    assert st.validate_trips(trips, ["평일", "토요일"], good) == []
+    assert syn.validate_trips(trips, ["평일", "토요일"], good) == []
 
     one_way = [t for t in trips if t["direction"] != "정왕역 → 본교"]
-    assert "한쪽 방향" in st.validate_trips(one_way, [], None)[0]
+    assert "한쪽 방향" in syn.validate_trips(one_way, [], None)[0]
     weekday_only = [t for t in trips if t["day_type"] != "토요일"]
-    assert st.validate_trips(weekday_only, ["토요일"], None) == [
+    assert syn.validate_trips(weekday_only, ["토요일"], None) == [
         "표 머리에 '토요일'이 있는데 토요일 운행편이 없습니다"
     ]
-    assert st.validate_trips(weekday_only, ["평일"], None) == []
+    assert syn.validate_trips(weekday_only, ["평일"], None) == []
     main = [t for t in trips if t["route"] == "정왕역 ↔ 본교"][:10] + [
         t for t in trips if t["direction"] == "정왕역 → 본교"
     ][:2]
-    assert st.validate_trips(main, [], good) == [
+    assert syn.validate_trips(main, [], good) == [
         "노선 소실: 제2캠퍼스 ↔ 본교·정왕역",
         f"편수 급감: {len(trips)} → 12",
     ]
@@ -152,8 +154,8 @@ def test_validation_rules(monkeypatch: pytest.MonkeyPatch) -> None:
         {**t, "departure_time_end": "08:00"} if t["kind"] != "fixed" else t
         for t in trips
     ]
-    assert st.validate_trips(reversed_range, [], None)[0].startswith("구간 시작")
-    assert st.validate_trips([], [], None) == ["운행편이 하나도 없습니다"]
+    assert syn.validate_trips(reversed_range, [], None)[0].startswith("구간 시작")
+    assert syn.validate_trips([], [], None) == ["운행편이 하나도 없습니다"]
 
 
 def test_failed_parse_keeps_previous(
@@ -161,10 +163,10 @@ def test_failed_parse_keeps_previous(
 ) -> None:
     _ingest(monkeypatch)
     before = api.get("/bus/timetable", params={"date": "2026-10-24"}).json()
-    title, trips, notes, _ = st.parse_shuttle_pdf(PDF.read_bytes())
+    title, trips, notes, _ = syn.parse_shuttle_pdf(PDF.read_bytes())
     broken = [t for t in trips if t["day_type"] != "토요일"]  # 토요일 열을 놓친 파싱
     monkeypatch.setattr(
-        st, "parse_shuttle_pdf", lambda _: (title, broken, notes, ["토요일"])
+        syn, "parse_shuttle_pdf", lambda _: (title, broken, notes, ["토요일"])
     )
     doc = _ingest(monkeypatch, b"%PDF new version")
     assert doc["pending"]["problems"] and "검토 대기" in caplog.text
@@ -178,12 +180,12 @@ def test_failed_parse_keeps_previous(
 
 def test_user_override_clears_review(monkeypatch: pytest.MonkeyPatch) -> None:
     _ingest(monkeypatch)
-    title, trips, notes, _ = st.parse_shuttle_pdf(PDF.read_bytes())
-    monkeypatch.setattr(st, "parse_shuttle_pdf", lambda _: (title, [], notes, []))
+    title, trips, notes, _ = syn.parse_shuttle_pdf(PDF.read_bytes())
+    monkeypatch.setattr(syn, "parse_shuttle_pdf", lambda _: (title, [], notes, []))
     _ingest(monkeypatch, b"%PDF empty")
-    assert st.needs_review(st.load_store()[PLACE])
-    kept = [st.ParsedTrip(**t) for t in st.load_store()[PLACE]["trips"]]
-    asyncio.run(st.save_user_timetable(PLACE, kept, "직접"))
+    assert sch.needs_review(sto.load_store()[PLACE])
+    kept = [sto.ParsedTrip(**t) for t in sto.load_store()[PLACE]["trips"]]
+    asyncio.run(sto.save_user_timetable(PLACE, kept, "직접"))
     body = api.get("/bus/timetable", params={"date": "2026-10-22"}).json()
     assert body["source"]["origin"] == "user"
     assert body["source"]["needs_review"] is False
@@ -216,6 +218,6 @@ def test_etag_and_304(monkeypatch: pytest.MonkeyPatch) -> None:
         )
         assert miss.status_code == 200 and miss.json()["version"] == version
     # 503에는 캐시 헤더를 붙이지 않음
-    monkeypatch.setattr(bus, "load_store", dict)
+    monkeypatch.setattr(shuttle_service, "load_store", dict)
     gone = api.get("/bus/timetable")
     assert gone.status_code == 503 and "etag" not in gone.headers

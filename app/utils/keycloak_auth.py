@@ -19,6 +19,11 @@ def expected_issuer() -> str:
 
 @lru_cache(maxsize=1)
 def _jwks_client() -> jwt.PyJWKClient:
+    """Keycloak JWKS를 조회하는 PyJWKClient를 만들어 재사용합니다.
+
+    Returns:
+        캐시된 PyJWKClient.
+    """
     url = Config.KC_JWKS_URL or f"{expected_issuer()}/protocol/openid-connect/certs"
     return jwt.PyJWKClient(url, cache_keys=True, lifespan=600, timeout=5)
 
@@ -37,6 +42,12 @@ def require_admin(
 
     Keycloak 설정이 없으면 fail-closed로 모든 쓰기를 거부합니다.
 
+    Args:
+        credentials: Authorization 헤더의 Bearer 자격 증명.
+
+    Returns:
+        토큰의 sub 클레임.
+
     Raises:
         HTTPException: 미설정(503), 토큰 없음·무효(401), 롤 없음(403).
     """
@@ -47,6 +58,12 @@ def require_shuttle_admin(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
 ) -> str:
     """셔틀 시간표 쓰기용. SHUTTLE_ADMIN_ROLES 중 하나가 있으면 sub를 반환합니다.
+
+    Args:
+        credentials: Authorization 헤더의 Bearer 자격 증명.
+
+    Returns:
+        토큰의 sub 클레임.
 
     Raises:
         HTTPException: 미설정(503), 토큰 없음·무효(401), 롤 없음(403).
@@ -60,6 +77,15 @@ def shuttle_admin_identity(
     """require_shuttle_admin과 같되 (sub, realm 롤 목록)을 반환합니다.
 
     롤에 따라 일부 옵션(예: 수정본을 덮어쓰는 force 동기화)을 더 막을 때 씁니다.
+
+    Args:
+        credentials: Authorization 헤더의 Bearer 자격 증명.
+
+    Returns:
+        (sub, realm 롤 목록).
+
+    Raises:
+        HTTPException: 미설정(503), 토큰 없음·무효(401), 롤 없음(403).
     """
     return _require_roles(credentials, Config.SHUTTLE_ADMIN_ROLES)
 
@@ -67,7 +93,18 @@ def shuttle_admin_identity(
 def _require_roles(
     credentials: HTTPAuthorizationCredentials | None, allowed: list[str]
 ) -> tuple[str, list[str]]:
-    """토큰을 검증하고 realm 롤이 allowed 중 하나와 겹치면 (sub, 롤 목록)을 반환합니다."""
+    """토큰을 검증하고 realm 롤이 allowed 중 하나와 겹치면 (sub, 롤 목록)을 반환합니다.
+
+    Args:
+        credentials: Authorization 헤더의 Bearer 자격 증명.
+        allowed: 허용할 realm 롤 이름 목록.
+
+    Returns:
+        (sub, 토큰의 realm 롤 목록).
+
+    Raises:
+        HTTPException: 미설정(503), 토큰 없음·무효·허용되지 않은 클라이언트(401), 롤 없음(403).
+    """
     if not Config.KC_SERVER_URL:
         raise HTTPException(
             Config.HttpStatus.SERVICE_UNAVAILABLE,

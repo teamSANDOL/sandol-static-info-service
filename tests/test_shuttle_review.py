@@ -13,7 +13,8 @@ from pydantic import ValidationError
 
 from app.config import Config
 from app.schemas.shuttle import ParsedTrip
-from app.utils import shuttle_timetable as st
+from app.services import shuttle_schedule as sch
+from app.services import shuttle_sync as syn
 from app.utils.shuttle_pdf import _cam_body, _header_days
 from main import app
 
@@ -43,8 +44,8 @@ def _trip(direction: str, time: str, vf: str = "09-01", vt: str = "12-22") -> di
         boarding_place=None,
         note=None,
     )
-    return st.ShuttleTrip(
-        **t.model_dump(), **st.SHUTTLE_DIRECTIONS[direction]
+    return syn.ShuttleTrip(
+        **t.model_dump(), **syn.SHUTTLE_DIRECTIONS[direction]
     ).model_dump()
 
 
@@ -68,23 +69,23 @@ def test_last_year_user_doc_does_not_hide_this_year_pdf() -> None:
             "trips": _both("08:00"),
         },
     }
-    assert st.pick_document(store, D(2026, 10, 22))["place"] == "26년 2학기"
-    assert st.pick_document(store, D(2025, 10, 22))["place"] == "25년 2학기(수정)"
+    assert sch.pick_document(store, D(2026, 10, 22))["place"] == "26년 2학기"
+    assert sch.pick_document(store, D(2025, 10, 22))["place"] == "25년 2학기(수정)"
     # 같은 날짜에 유효한 문서끼리는 수정본 우선
     store["26년 직접"] = {**store["26년 2학기"], "place": "26년 직접", "source": "user"}
-    assert st.pick_document(store, D(2026, 10, 22))["place"] == "26년 직접"
+    assert sch.pick_document(store, D(2026, 10, 22))["place"] == "26년 직접"
 
 
 def test_legacy_doc_year_from_title() -> None:
     """ref_date·parsed_at 없는 옛 저장본은 제목의 'NN년'으로 연도를 정합니다."""
     doc = {"place": "25년 셔틀 (2학기)", "source": "user", "trips": _both("07:00")}
-    assert st.doc_range(doc, D(2026, 10, 22)) == (D(2025, 9, 1), D(2025, 12, 22))
+    assert sch.doc_range(doc, D(2026, 10, 22)) == (D(2025, 9, 1), D(2025, 12, 22))
     winter = {
         "place": "26년 겨울방학",
         "source": "pdf",
         "trips": [_trip("본교 → 정왕역", "09:00", "12-23", "02-28")],
     }
-    assert st.doc_range(winter, D(2027, 1, 10)) == (D(2026, 12, 23), D(2027, 2, 28))
+    assert sch.doc_range(winter, D(2027, 1, 10)) == (D(2026, 12, 23), D(2027, 2, 28))
 
 
 def test_out_of_period_shows_last_real_period() -> None:
@@ -94,8 +95,8 @@ def test_out_of_period_shows_last_real_period() -> None:
         "parsed_at": "2026-09-05T00:00:00+00:00",
         "trips": _both("08:00"),
     }
-    body = st.build_timetable(
-        st.pick_document({"a": doc}, D(2027, 1, 2)), D(2027, 1, 2)
+    body = sch.build_timetable(
+        sch.pick_document({"a": doc}, D(2027, 1, 2)), D(2027, 1, 2)
     )
     assert (body["valid_from"], body["valid_to"]) == ("2026-09-01", "2026-12-22")
     assert all(not d["segments"] for r in body["routes"] for d in r["directions"])
@@ -155,11 +156,11 @@ def test_semester_change_compares_with_latest_good() -> None:
     prev = {"trips": _both("08:00") + [_trip("본교 → 제2캠퍼스", "10:00")]}
     vacation = _both("09:00")
     # 편수는 줄어도(방학) 새 place라 급감으로 보지 않지만 노선 소실은 잡음
-    assert st.validate_trips(vacation, [], prev, same_place=False) == [
+    assert syn.validate_trips(vacation, [], prev, same_place=False) == [
         "노선 소실: 제2캠퍼스 ↔ 본교·정왕역"
     ]
     assert (
-        st.validate_trips(
+        syn.validate_trips(
             vacation
             + [_trip("본교 → 제2캠퍼스", "10:00"), _trip("제2캠퍼스 → 본교", "11:00")],
             [],
@@ -172,11 +173,11 @@ def test_semester_change_compares_with_latest_good() -> None:
 
 def _ingest(monkeypatch: pytest.MonkeyPatch, place: str, trips: list[dict]) -> Any:
     monkeypatch.setattr(
-        st, "fetch_shuttle_pdf", AsyncMock(return_value=(place, "u", place.encode()))
+        syn, "fetch_shuttle_pdf", AsyncMock(return_value=(place, "u", place.encode()))
     )
     parsed = [ParsedTrip(**t).model_dump() for t in trips]  # 파서 출력 모양
-    monkeypatch.setattr(st, "parse_shuttle_pdf", lambda _: ("제목", parsed, [], []))
-    return asyncio.run(st.ingest_shuttle_pdf())
+    monkeypatch.setattr(syn, "parse_shuttle_pdf", lambda _: ("제목", parsed, [], []))
+    return asyncio.run(syn.ingest_shuttle_pdf())
 
 
 def test_first_parse_failure_is_served_with_review(
@@ -225,10 +226,10 @@ def test_time_format_validated() -> None:
 
 def test_version_covers_response_fields() -> None:
     doc = {"place": "a", "source": "pdf", "pdf_url": "u1", "trips": _both("08:00")}
-    v1 = st.timetable_version(doc, [], False)
-    assert st.timetable_version({**doc, "pdf_url": "u2"}, [], False) != v1
-    assert st.timetable_version({**doc, "parsed_at": "2026-01-01"}, [], False) != v1
-    assert st.timetable_version({**doc, "pending": {"x": 1}}, [], False) == v1
+    v1 = sch.timetable_version(doc, [], False)
+    assert sch.timetable_version({**doc, "pdf_url": "u2"}, [], False) != v1
+    assert sch.timetable_version({**doc, "parsed_at": "2026-01-01"}, [], False) != v1
+    assert sch.timetable_version({**doc, "pending": {"x": 1}}, [], False) == v1
 
 
 def test_bad_stored_values_do_not_break_public_get(
@@ -272,8 +273,8 @@ def test_user_doc_wins_within_same_day_even_without_period() -> None:
         "ref_date": "2026-10-01",
         "trips": [{**t, "valid_from": None, "valid_to": None} for t in _both("07:00")],
     }
-    assert st.pick_document({"a": pdf, "b": always}, D(2026, 10, 22)) is always
+    assert sch.pick_document({"a": pdf, "b": always}, D(2026, 10, 22)) is always
     # 기간 있는 관리자 문서도 그날 유효하면 우선, 기간 밖이면 PDF
     dated = {**always, "valid_from": "2026-11-01", "valid_to": "2026-11-30"}
-    assert st.pick_document({"a": pdf, "b": dated}, D(2026, 11, 5)) is dated
-    assert st.pick_document({"a": pdf, "b": dated}, D(2026, 10, 22)) is pdf
+    assert sch.pick_document({"a": pdf, "b": dated}, D(2026, 11, 5)) is dated
+    assert sch.pick_document({"a": pdf, "b": dated}, D(2026, 10, 22)) is pdf

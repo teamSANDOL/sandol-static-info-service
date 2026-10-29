@@ -19,10 +19,12 @@ from cryptography.fernet import Fernet, InvalidToken
 from fastapi import APIRouter, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials
 from sqladmin.authentication import AuthenticationBackend
+from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
 from starlette.responses import RedirectResponse, Response
 
 from app.config import Config, logger
+from app.utils.audit import record_audit
 from app.utils.keycloak_auth import expected_issuer, require_admin
 
 # kakao-bot 관리자 쿠키(sandol_admin_session)와 같은 도메인을 쓰므로 이름을 구분한다.
@@ -51,15 +53,35 @@ def admin_configured() -> bool:
 
 
 def _fernet() -> Fernet:
+    """세션 쿠키 암호화에 쓰는 Fernet 인스턴스를 만듭니다.
+
+    Returns:
+        ADMIN_SESSION_KEY로 만든 Fernet.
+    """
     return Fernet(Config.ADMIN_SESSION_KEY)
 
 
 def _encrypt(data: dict) -> str:
+    """dict를 JSON으로 직렬화해 Fernet으로 암호화합니다.
+
+    Args:
+        data: 쿠키에 담을 값.
+
+    Returns:
+        쿠키 문자열.
+    """
     return _fernet().encrypt(json.dumps(data).encode()).decode()
 
 
 def _decrypt(raw: str | None) -> dict | None:
-    """쿠키를 복호화합니다. 없거나 위조·만료면 None."""
+    """쿠키를 복호화합니다. 없거나 위조·만료면 None.
+
+    Args:
+        raw: 쿠키 원문.
+
+    Returns:
+        복호화된 dict. 쿠키가 없거나 위조·만료됐으면 None.
+    """
     if not raw:
         return None
     try:
@@ -72,6 +94,14 @@ def _decrypt(raw: str | None) -> dict | None:
 
 
 def _set_cookie(response: Response, name: str, value: str, max_age: int) -> None:
+    """관리자 화면용 보안 쿠키를 응답에 설정합니다.
+
+    Args:
+        response: 쿠키를 붙일 응답.
+        name: 쿠키 이름.
+        value: 암호화된 쿠키 값.
+        max_age: 유효 시간(초).
+    """
     response.set_cookie(
         name,
         value,
@@ -109,7 +139,8 @@ def build_login_redirect() -> Response:
         }
     )
     response = RedirectResponse(
-        f"{expected_issuer()}/protocol/openid-connect/auth?{query}", status_code=302
+        f"{expected_issuer()}/protocol/openid-connect/auth?{query}",
+        status_code=Config.HttpStatus.FOUND,
     )
     cookie = _encrypt(
         {
@@ -124,6 +155,13 @@ def build_login_redirect() -> Response:
 
 async def exchange_code(code: str, code_verifier: str) -> dict:
     """Authorization Code를 토큰으로 교환합니다.
+
+    Args:
+        code: Keycloak이 돌려준 authorization code.
+        code_verifier: PKCE code_verifier.
+
+    Returns:
+        Keycloak 토큰 응답(JSON).
 
     Raises:
         httpx.HTTPError: 네트워크 오류 또는 Keycloak이 4xx/5xx를 반환한 경우.
@@ -155,7 +193,14 @@ def admin_sub(request: Request) -> str | None:
 
 
 def csrf_token(request: Request) -> str:
-    """현재 세션에 묶인 CSRF 토큰. 커스텀 뷰 폼의 hidden 필드에 넣는다."""
+    """현재 세션에 묶인 CSRF 토큰. 커스텀 뷰 폼의 hidden 필드에 넣는다.
+
+    Args:
+        request: 현재 요청(세션 쿠키를 읽는다).
+
+    Returns:
+        세션 쿠키로부터 계산한 HMAC 16진 문자열.
+    """
     raw = request.cookies.get(SESSION_COOKIE, "")
     return hmac.new(
         Config.ADMIN_SESSION_KEY.encode(), raw.encode(), hashlib.sha256
@@ -163,17 +208,29 @@ def csrf_token(request: Request) -> str:
 
 
 def verify_csrf(request: Request, token: str | None) -> bool:
-    """폼으로 받은 CSRF 토큰이 현재 세션 것인지 확인합니다."""
+    """폼으로 받은 CSRF 토큰이 현재 세션 것인지 확인합니다.
+
+    Args:
+        request: 현재 요청(세션 쿠키를 읽는다).
+        token: 폼으로 받은 토큰.
+
+    Returns:
+        세션이 유효하고 토큰이 일치하면 True.
+    """
     if not token or admin_sub(request) is None:
         return False
     return hmac.compare_digest(token, csrf_token(request))
 
 
 def log_admin_action(request: Request, action: str, target: str) -> None:
-    """감사 로그 한 줄. 형식은 모든 관리자 뷰가 공유한다."""
-    logger.info(
-        "admin_audit sub=%s action=%s target=%s", admin_sub(request), action, target
-    )
+    """감사 기록(로그 한 줄 + DB 행). 모든 관리자 뷰가 공유한다.
+
+    Args:
+        request: 현재 요청(수행자 sub를 세션에서 읽는다).
+        action: `영역.대상.동작` 형식의 작업 이름.
+        target: 대상 식별자.
+    """
+    record_audit(admin_sub(request), action, target)
 
 
 class KeycloakAdminAuth(AuthenticationBackend):
@@ -190,7 +247,8 @@ class KeycloakAdminAuth(AuthenticationBackend):
     async def logout(self, request: Request) -> Response | bool:
         """세션 쿠키를 지우고 Keycloak 로그아웃으로 보냅니다."""
         response = RedirectResponse(
-            f"{expected_issuer()}/protocol/openid-connect/logout", status_code=302
+            f"{expected_issuer()}/protocol/openid-connect/logout",
+            status_code=Config.HttpStatus.FOUND,
         )
         response.delete_cookie(SESSION_COOKIE, path=Config.ROOT_PATH)
         return response
@@ -212,10 +270,24 @@ async def admin_oauth_callback(
     state: str | None = None,
     error: str | None = None,
 ) -> Response:
-    """Keycloak 로그인 후 관리자 롤을 확인하고 세션 쿠키를 발급합니다."""
+    """Keycloak 로그인 후 관리자 롤을 확인하고 세션 쿠키를 발급합니다.
+
+    Args:
+        request: 현재 요청(state 쿠키를 읽는다).
+        code: Keycloak이 돌려준 authorization code.
+        state: Keycloak이 돌려준 state.
+        error: 로그인 실패 시 Keycloak이 보내는 오류 코드.
+
+    Returns:
+        관리자 화면으로 가는 리다이렉트(세션 쿠키 포함).
+
+    Raises:
+        HTTPException: 로그인 오류·state 불일치·토큰 교환 실패면 401.
+            관리자 롤이 없으면 require_admin이 403을 올린다.
+    """
     if error:
         logger.warning("관리자 로그인 콜백 오류: %s", error)
-        raise HTTPException(401, "admin_login_failed")
+        raise HTTPException(Config.HttpStatus.UNAUTHORIZED, "admin_login_failed")
     saved = _decrypt(request.cookies.get(STATE_COOKIE))
     if (
         not code
@@ -223,22 +295,27 @@ async def admin_oauth_callback(
         or saved is None
         or not hmac.compare_digest(str(saved.get("state", "")), state)
     ):
-        raise HTTPException(401, "invalid_oauth_state")
+        raise HTTPException(Config.HttpStatus.UNAUTHORIZED, "invalid_oauth_state")
 
     try:
         token = await exchange_code(code, str(saved.get("code_verifier", "")))
         access_token = str(token["access_token"])
     except (httpx.HTTPError, KeyError, ValueError) as exc:
         logger.warning("관리자 토큰 교환 실패: %s", type(exc).__name__)
-        raise HTTPException(401, "admin_token_exchange_failed") from exc
+        raise HTTPException(
+            Config.HttpStatus.UNAUTHORIZED, "admin_token_exchange_failed"
+        ) from exc
 
     # 쓰기 API와 같은 검증(JWKS 서명, iss, realm role)을 그대로 쓴다.
-    sub = require_admin(
-        HTTPAuthorizationCredentials(scheme="Bearer", credentials=access_token)
+    # require_admin은 PyJWKClient의 동기 HTTP를 쓰므로 이벤트 루프 밖에서 실행한다.
+    sub = await run_in_threadpool(
+        require_admin,
+        HTTPAuthorizationCredentials(scheme="Bearer", credentials=access_token),
     )
 
     response = RedirectResponse(
-        f"{Config.STATIC_INFO_PUBLIC_BASE_URL}/admin/", status_code=302
+        f"{Config.STATIC_INFO_PUBLIC_BASE_URL}/admin/",
+        status_code=Config.HttpStatus.FOUND,
     )
     _set_cookie(
         response,
@@ -249,5 +326,5 @@ async def admin_oauth_callback(
         Config.ADMIN_SESSION_TTL_SECONDS,
     )
     response.delete_cookie(STATE_COOKIE, path=Config.ROOT_PATH)
-    logger.info("admin_audit sub=%s action=login target=-", sub)
+    record_audit(sub, "admin.login", "-")
     return response

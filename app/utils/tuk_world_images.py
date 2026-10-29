@@ -26,6 +26,14 @@ def validate_image(
 ) -> tuple[str, str]:
     """이미지 바이트를 검증하고 (MIME, 확장자)를 반환합니다.
 
+    Args:
+        data: 업로드된 바이트.
+        original_name: 업로드 파일명(확장자 검사용).
+        declared_type: 업로드 Content-Type.
+
+    Returns:
+        (MIME, 저장 확장자) 튜플.
+
     Raises:
         ImageValidationError: 크기·확장자·MIME·실제 포맷 중 하나라도 어긋날 때.
     """
@@ -51,7 +59,15 @@ def validate_image(
 
 
 def save_image(data: bytes, ext: str) -> str:
-    """서버 생성 파일명으로 저장하고 파일명을 반환합니다."""
+    """서버 생성 파일명으로 저장하고 파일명을 반환합니다.
+
+    Args:
+        data: 저장할 이미지 바이트.
+        ext: 저장 확장자(점 포함, 예: ".png").
+
+    Returns:
+        저장된 파일명(uuid hex + 확장자).
+    """
     filename = f"{uuid.uuid4().hex}{ext}"
     with open(os.path.join(Config.TUK_WORLD_IMAGE_DIR, filename), "xb") as f:
         f.write(data)
@@ -59,12 +75,23 @@ def save_image(data: bytes, ext: str) -> str:
 
 
 def image_path(filename: str) -> str:
-    """저장된 파일명의 절대 경로."""
+    """저장된 파일명의 절대 경로.
+
+    Args:
+        filename: 저장된 파일명. 경로 성분은 무시한다.
+
+    Returns:
+        이미지 디렉터리 아래의 경로.
+    """
     return os.path.join(Config.TUK_WORLD_IMAGE_DIR, os.path.basename(filename))
 
 
 def remove_image(filename: str) -> None:
-    """이미지 파일을 지웁니다. 이미 없으면 무시합니다."""
+    """이미지 파일을 지웁니다. 이미 없으면 무시합니다.
+
+    Args:
+        filename: 지울 파일명.
+    """
     try:
         os.remove(image_path(filename))
     except FileNotFoundError:

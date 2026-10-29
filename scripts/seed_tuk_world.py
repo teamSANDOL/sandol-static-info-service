@@ -41,7 +41,15 @@ IMAGE_COLORS = ["#4a90d9", "#e07b39"]
 
 
 def dummy_png(label: str, color: str) -> bytes:
-    """식별용 단색 PNG를 만듭니다."""
+    """식별용 단색 PNG를 만듭니다.
+
+    Args:
+        label: 이미지에 그릴 글자.
+        color: 배경색.
+
+    Returns:
+        PNG 바이트.
+    """
     img = Image.new("RGB", (640, 400), color)
     ImageDraw.Draw(img).text((20, 20), label, fill="white")
     buf = io.BytesIO()

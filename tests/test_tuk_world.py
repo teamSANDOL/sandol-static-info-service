@@ -175,6 +175,22 @@ def test_image_upload_too_large(monkeypatch: pytest.MonkeyPatch) -> None:
     assert res.status_code == 413
 
 
+def test_category_address_and_filter() -> None:
+    body = {**BODY, "category": "식당", "address": "경기도 시흥시 산기대학로 237"}
+    rid = client.post("/tuk-world/restaurants", json=body, headers=ADMIN).json()["id"]
+    other = client.post(
+        "/tuk-world/restaurants", json={**BODY, "category": "술집"}, headers=ADMIN
+    ).json()["id"]
+    got = client.get(f"/tuk-world/restaurants/{rid}").json()
+    assert (got["category"], got["address"]) == (body["category"], body["address"])
+    ids = {r["id"] for r in client.get("/tuk-world/restaurants?category=식당").json()}
+    assert rid in ids and other not in ids
+    res = client.patch(
+        f"/tuk-world/restaurants/{rid}", json={"category": None}, headers=ADMIN
+    )
+    assert res.status_code == 200 and res.json()["category"] is None
+
+
 def test_timestamps_are_utc_aware() -> None:
     rid = create()
     body = client.get(f"/tuk-world/restaurants/{rid}").json()
@@ -247,3 +263,49 @@ def test_allowed_clients(
 def test_bus_write_requires_token(method: str, path: str) -> None:
     res = client.request(method, path, json={"trips": []} if method == "PUT" else None)
     assert res.status_code == 401
+
+
+def test_updated_by_and_audit_rows_recorded() -> None:
+    from sqlalchemy import select
+
+    from app.database import SessionLocal
+    from app.models.admin_audit import AdminAuditLog
+    from app.models.tuk_world import Restaurant, RestaurantImage
+
+    rid = create()
+    client.post(
+        f"/tuk-world/restaurants/{rid}/images",
+        files={"file": ("a.png", png_bytes(), "image/png")},
+        headers=ADMIN,
+    )
+    with SessionLocal() as db:
+        restaurant = db.get(Restaurant, rid)
+        assert restaurant is not None and restaurant.updated_by == "admin-sub"
+        assert restaurant.images[0].updated_by == "admin-sub"
+        actions = db.scalars(
+            select(AdminAuditLog.action).where(AdminAuditLog.target == f"id={rid}")
+        ).all()
+        assert "tuk_world.restaurant.create" in actions
+        assert db.scalars(select(RestaurantImage)).first() is not None
+
+
+def test_upload_to_missing_restaurant_404_before_reading(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.routers import tuk_world as router_module
+
+    reads: list[str] = []
+
+    class SpyConfig:
+        def __getattr__(self, name: str) -> Any:
+            if name == "TUK_WORLD_MAX_IMAGE_BYTES":
+                reads.append(name)
+            return getattr(Config, name)
+
+    monkeypatch.setattr(router_module, "Config", SpyConfig())
+    res = client.post(
+        "/tuk-world/restaurants/999999/images",
+        files={"file": ("a.png", b"x", "image/png")},
+        headers=ADMIN,
+    )
+    assert res.status_code == 404 and reads == []

@@ -18,6 +18,7 @@ dependencies = [
     "pillow>=11",
     "sqladmin>=0.24,<0.25",
     "cryptography>=44",
+    "alembic>=1.20.1",
 ]
 
 [dependency-groups]

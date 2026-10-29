@@ -12,7 +12,7 @@ from PIL import Image
 from sqlalchemy import select
 
 from app.admin import auth as admin_auth
-from app.admin import mount_admin
+from app.admin import mount_admin, tuk_world_view
 from app.config import Config
 from app.database import SessionLocal, init_db
 from app.models.tuk_world import Restaurant, RestaurantImage
@@ -164,3 +164,48 @@ def test_anonymous_redirected(
     monkeypatch.setattr(admin_auth, "admin_sub", lambda r: None)  # 세션 없음
     res = client.get(f"{P}/restaurant/list")
     assert res.status_code == 302
+
+
+def test_category_address_form_and_filter(client: TestClient) -> None:
+    rid = _create(client, category="술집", address="경기도 시흥시 어딘가 1")
+    other = _create(client, category="식당", name="다른집")
+    with SessionLocal() as db:
+        r = db.get(Restaurant, rid)
+        assert r is not None and (r.category, r.address) == (
+            "술집",
+            "경기도 시흥시 어딘가 1",
+        )
+        o = db.get(Restaurant, other)
+        assert o is not None and o.address is None
+    page = client.get(f"{P}/restaurant/list?category=술집").text
+    assert "경기도 시흥시 어딘가 1" in page and "다른집" not in page
+    assert "다른집" in client.get(f"{P}/restaurant/list?search=식당").text
+
+
+def test_image_file_removed_when_commit_fails(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from sqladmin._queries import Query
+
+    async def fake_insert(self: Query, data: dict, request: object) -> None:
+        # 훅(파일 저장)은 실행되고 커밋은 실패하는 상황
+        await self.model_view.on_model_change(
+            data, self.model_view.model(), True, request
+        )
+        raise RuntimeError("commit failed")
+
+    rid = _create(client)
+    before = os.listdir(Config.TUK_WORLD_IMAGE_DIR)
+    monkeypatch.setattr(Query, "insert", fake_insert)
+    saved: list[str] = []
+    real_save = tuk_world_view.save_image
+
+    def spy_save(data: bytes, ext: str) -> str:
+        saved.append(real_save(data, ext))
+        return saved[-1]
+
+    monkeypatch.setattr(tuk_world_view, "save_image", spy_save)
+    res = _upload(client, rid, _png(), "a.png", "image/png")
+    assert res.status_code == 400  # sqladmin이 예외를 폼 오류로 바꾼다.
+    assert len(saved) == 1  # 파일은 실제로 저장됐다가
+    assert os.listdir(Config.TUK_WORLD_IMAGE_DIR) == before  # 지워졌다.

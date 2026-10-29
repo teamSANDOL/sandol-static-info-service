@@ -3,7 +3,7 @@
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from app.config.config import logger
-from app.utils.shuttle_timetable import sync_shuttle_timetables
+from app.services.shuttle_sync import sync_shuttle_timetables
 
 scheduler = AsyncIOScheduler(timezone="Asia/Seoul")
 

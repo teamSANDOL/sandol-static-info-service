@@ -21,6 +21,10 @@ class RestaurantCreate(BaseModel):
     """식당 등록 요청."""
 
     name: str = Field(min_length=1, max_length=100, description="식당명")
+    category: str | None = Field(
+        None, max_length=20, description="분류(자유 문자열, 예: 식당·술집·여가)"
+    )
+    address: str | None = Field(None, max_length=200, description="도로명주소")
     naver_map_url: HttpUrl | None = Field(None, description="네이버 지도 링크")
     kakao_map_url: HttpUrl | None = Field(None, description="카카오맵 링크")
     latitude: float = Latitude
@@ -34,6 +38,8 @@ class RestaurantUpdate(BaseModel):
     """식당 부분 수정 요청. 보낸 필드만 바뀝니다. null을 보내면 값이 지워집니다."""
 
     name: str | None = Field(None, min_length=1, max_length=100)
+    category: str | None = Field(None, max_length=20)
+    address: str | None = Field(None, max_length=200)
     naver_map_url: HttpUrl | None = None
     kakao_map_url: HttpUrl | None = None
     latitude: float | None = Field(None, ge=-90, le=90)
@@ -57,6 +63,8 @@ class RestaurantOut(BaseModel):
 
     id: int
     name: str
+    category: str | None
+    address: str | None
     naver_map_url: str | None
     kakao_map_url: str | None
     latitude: float

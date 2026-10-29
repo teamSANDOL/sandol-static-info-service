@@ -1,5 +1,8 @@
+"""조직도 조회 API(트리·이름 검색·경로 조회)."""
+
 from fastapi import APIRouter, Path, HTTPException
 from typing import Union, List
+from app.config import Config
 from app.utils.university_structure import (
     get_tukorea_structure,
     OrganizationGroup,
@@ -9,7 +12,9 @@ from app.utils.university_structure import (
 router = APIRouter(
     prefix="/organization",
     tags=["Organization"],
-    responses={404: {"description": "조직을 찾을 수 없습니다."}},
+    responses={
+        Config.HttpStatus.NOT_FOUND: {"description": "조직을 찾을 수 없습니다."}
+    },
 )
 
 
@@ -26,6 +31,7 @@ router = APIRouter(
 """,
 )
 async def get_tree():
+    """조직 전체 트리를 반환합니다."""
     structure = get_tukorea_structure()
     return structure.root
 
@@ -46,6 +52,7 @@ async def get_tree():
 async def search_by_name(
     name: str = Path(..., description="조직 이름 (예: 입학처, 컴퓨터공학부)"),
 ):
+    """이름이 일치하는 모든 조직을 반환합니다."""
     structure = get_tukorea_structure()
     return structure._search_by_name(structure.root, name)
 
@@ -68,6 +75,7 @@ async def search_by_name(
 async def get_children(
     path: str = Path(..., description="조직 경로 (예: 단과대학/SW대학)"),
 ):
+    """경로에 있는 조직의 하위 조직 목록을 반환합니다. Unit이면 빈 목록."""
     structure = get_tukorea_structure()
     result = structure.get_unit(path)
     if isinstance(result, OrganizationGroup):
@@ -97,8 +105,11 @@ async def get_children(
 async def get_organization(
     path: str = Path(..., description="조직 경로 (예: 단과대학/SW대학/컴퓨터공학부)"),
 ):
+    """경로에 있는 조직을 반환합니다. 없으면 404."""
     structure = get_tukorea_structure()
     result = structure.get_unit(path)
     if result is None:
-        raise HTTPException(status_code=404, detail="조직을 찾을 수 없습니다.")
+        raise HTTPException(
+            status_code=Config.HttpStatus.NOT_FOUND, detail="조직을 찾을 수 없습니다."
+        )
     return result

@@ -1,11 +1,17 @@
+"""iBook 페이지 이미지를 Accept 헤더에 맞는 응답 형식(json/base64/zip 등)으로 만드는 도구."""
+
 from typing import Union
 from fastapi.responses import (
     JSONResponse,
     StreamingResponse,
     PlainTextResponse,
 )
-from fastapi import HTTPException
-import httpx, base64, io, zipfile
+from fastapi import HTTPException, Request
+import base64
+import io
+import zipfile
+
+import httpx
 
 from app.config import Config
 
@@ -30,6 +36,9 @@ async def build_response_base64(image_urls: list[str]):
 
     Returns:
         JSONResponse: Base64로 인코딩된 이미지 데이터를 포함한 JSON 응답
+
+    Raises:
+        HTTPException: 이미지 다운로드가 실패하면 502.
     """
     base64_list = []
     async with httpx.AsyncClient() as client:
@@ -58,6 +67,9 @@ async def build_response_zip(image_urls: list[str], file_stem: str = "shuttle"):
 
     Returns:
         StreamingResponse: 이미지들을 포함한 ZIP 파일 스트리밍 응답
+
+    Raises:
+        HTTPException: 이미지 다운로드가 실패하면 502.
     """
     zip_buffer = io.BytesIO()
     async with httpx.AsyncClient() as client:
@@ -89,6 +101,9 @@ async def build_response_octet_stream(
 
     Returns:
         StreamingResponse: 단일 이미지 또는 ZIP 파일 스트리밍 응답
+
+    Raises:
+        HTTPException: 이미지 다운로드가 실패하면 502.
     """
     if len(image_urls) == 1:
         async with httpx.AsyncClient() as client:
@@ -128,6 +143,9 @@ async def build_response_jpeg(image_urls: list[str], file_stem: str = "shuttle")
 
     Returns:
         StreamingResponse: JPEG 이미지 스트리밍 응답
+
+    Raises:
+        HTTPException: 이미지 다운로드가 실패하면 502.
     """
     async with httpx.AsyncClient() as client:
         resp = await client.get(image_urls[0], timeout=10)
@@ -149,11 +167,15 @@ async def build_image_response(
 
     Args:
         image_urls (Union[str, list[str]]): 이미지 URL 또는 URL 리스트
-        response_type (str): 응답 타입 (json, base64, zip, octet-stream, text, jpeg, png)
+        response_type (str): 응답 타입 (json, base64, zip, octet-stream, text, jpeg)
         file_stem (str): 다운로드 파일명 앞부분 (예: shuttle, meal)
 
     Returns:
         Response: 요청된 타입에 따른 FastAPI 응답 객체
+
+    Raises:
+        HTTPException: URL이 비었으면 404, 지원하지 않는 response_type이면 400,
+            이미지 다운로드가 실패하면 502.
     """
     urls = [image_urls] if isinstance(image_urls, str) else image_urls
 
@@ -174,4 +196,47 @@ async def build_image_response(
         return await build_response_text(urls)
     if response_type == "jpeg":
         return await build_response_jpeg(urls, file_stem)
-    raise HTTPException(status_code=400, detail="지원되지 않는 response_type입니다.")
+    raise HTTPException(
+        status_code=Config.HttpStatus.BAD_REQUEST,
+        detail="지원되지 않는 response_type입니다.",
+    )
+
+
+# Accept 헤더 -> response_type. 순서가 우선순위입니다.
+ALL_IMAGES_TYPES: list[tuple[str, str]] = [
+    (Config.Accept.JSON, "json"),
+    (Config.Accept.BASE64, "base64"),
+    (Config.Accept.ZIP, "zip"),
+    (Config.Accept.OCTET_STREAM, "octet-stream"),
+]
+SINGLE_IMAGE_TYPES: list[tuple[str, str]] = [
+    (Config.Accept.JSON, "json"),
+    (Config.Accept.BASE64, "base64"),
+    (Config.Accept.OCTET_STREAM, "octet-stream"),
+    (Config.Accept.ZIP, "zip"),
+    ("text/plain", "text"),
+    (Config.ImageType.JPEG, "jpeg"),
+]
+
+
+def resolve_response_type(request: Request, table: list[tuple[str, str]]) -> str:
+    """Accept 헤더에 맞는 response_type을 고릅니다.
+
+    Args:
+        request: 현재 요청(Accept 헤더를 읽는다).
+        table: (MIME, response_type) 목록. 앞쪽이 우선한다.
+
+    Returns:
+        선택된 response_type.
+
+    Raises:
+        HTTPException: 지원하는 Accept가 없으면 406.
+    """
+    accept_header = request.headers.get("accept", "").lower()
+    for mime, response_type in table:
+        if mime in accept_header:
+            return response_type
+    raise HTTPException(
+        status_code=Config.HttpStatus.NOT_ACCEPTABLE,
+        detail="지원되지 않는 Accept 헤더입니다.",
+    )

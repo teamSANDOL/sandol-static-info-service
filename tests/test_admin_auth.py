@@ -142,3 +142,18 @@ def test_csrf_bound_to_session(
     assert admin_auth.verify_csrf(request, token)
     assert not admin_auth.verify_csrf(request, "0" * 64)
     assert admin_auth.admin_sub(request) == "admin-sub"
+
+
+def test_callback_runs_require_admin_off_event_loop(
+    admin_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import asyncio
+
+    def fake_require_admin(credentials: object) -> str:
+        with pytest.raises(RuntimeError):  # 스레드풀에는 실행 중인 루프가 없다.
+            asyncio.get_running_loop()
+        return "admin-sub"
+
+    monkeypatch.setattr(admin_auth, "require_admin", fake_require_admin)
+    res = _login(admin_client, monkeypatch, ["global_admin"])
+    assert res.status_code == 302

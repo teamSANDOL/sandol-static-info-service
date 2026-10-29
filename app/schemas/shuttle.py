@@ -84,7 +84,14 @@ class ParsedTrip(BaseModel):
 
     @model_validator(mode="after")
     def _range_needs_end(self) -> "ParsedTrip":
-        """수시운행·도착버스 구간은 종료 시각(막차)이 있어야 앱이 구간으로 그립니다."""
+        """수시운행·도착버스 구간은 종료 시각(막차)이 있어야 앱이 구간으로 그립니다.
+
+        Returns:
+            검증을 통과한 자기 자신.
+
+        Raises:
+            ValueError: 정시(fixed)가 아닌데 departure_time_end가 없을 때.
+        """
         if self.kind != "fixed" and not self.departure_time_end:
             raise ValueError(f"kind={self.kind}에는 departure_time_end가 필요합니다.")
         return self
@@ -165,7 +172,14 @@ class AdminTripIn(BaseModel):
 
     @model_validator(mode="after")
     def _check_range(self) -> "AdminTripIn":
-        """정시 편엔 종료가 없고, 구간엔 시작 < 종료가 있어야 합니다."""
+        """정시 편엔 종료가 없고, 구간엔 시작 < 종료가 있어야 합니다.
+
+        Returns:
+            검증을 통과한 자기 자신.
+
+        Raises:
+            ValueError: fixed에 end가 있거나, 구간에 end가 없거나 time보다 늦지 않을 때.
+        """
         if self.kind == "fixed" and self.end is not None:
             raise ValueError("fixed 편에는 end를 넣지 않습니다.")
         if self.kind != "fixed" and (self.end is None or not self.time < self.end):
@@ -212,7 +226,14 @@ class AdminTimetableMeta(BaseModel):
 
     @model_validator(mode="after")
     def _check_period(self) -> "AdminTimetableMeta":
-        """유효기간은 둘 다 넣거나 둘 다 비우며, 시작 ≤ 종료여야 합니다."""
+        """유효기간은 둘 다 넣거나 둘 다 비우며, 시작 ≤ 종료여야 합니다.
+
+        Returns:
+            검증을 통과한 자기 자신.
+
+        Raises:
+            ValueError: 한쪽만 넣었거나 시작이 종료보다 늦을 때.
+        """
         if (self.valid_from is None) != (self.valid_to is None):
             raise ValueError("valid_from과 valid_to는 함께 넣습니다.")
         if self.valid_from and self.valid_to and self.valid_from > self.valid_to:

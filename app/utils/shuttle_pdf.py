@@ -52,31 +52,84 @@ PLACES = [
 
 
 def _cx(w):
+    """단어의 가로 중심 x 좌표.
+
+    Args:
+        w: pdfplumber 단어 dict(`x0`, `x1` 사용).
+
+    Returns:
+        `(x0 + x1) / 2`.
+    """
     return (w["x0"] + w["x1"]) / 2
 
 
 def _vlines(page):
+    """페이지의 세로 괘선 x 좌표 목록.
+
+    Args:
+        page: pdfplumber 페이지.
+
+    Returns:
+        `x0`와 `x1` 차가 1.5 미만인 선의 `x0`를 소수 첫째 자리로 반올림해
+        중복 없이 오름차순으로 모은 리스트.
+    """
     return sorted(
         {round(l["x0"], 1) for l in page.lines if abs(l["x0"] - l["x1"]) < 1.5}
     )
 
 
 def _hlines(page):
+    """페이지의 가로 괘선 y(top) 좌표 목록.
+
+    Args:
+        page: pdfplumber 페이지.
+
+    Returns:
+        `top`과 `bottom` 차가 1.5 미만인 선의 `top`을 소수 첫째 자리로 반올림해
+        중복 없이 오름차순으로 모은 리스트.
+    """
     return sorted(
         {round(l["top"], 1) for l in page.lines if abs(l["top"] - l["bottom"]) < 1.5}
     )
 
 
 def _hhmm(h, m):
+    """시·분을 `HH:MM` 문자열로 만듭니다.
+
+    Args:
+        h: 시(정수 또는 숫자 문자열).
+        m: 분(정수 또는 숫자 문자열).
+
+    Returns:
+        0으로 채운 두 자리 `HH:MM` 문자열.
+    """
     return f"{int(h):02d}:{int(m):02d}"
 
 
 def _row(words, top, tol=6):
+    """`top`이 기준과 가까운 단어만 골라 같은 행으로 봅니다.
+
+    Args:
+        words: pdfplumber 단어 dict 목록.
+        top: 기준 행의 top 좌표.
+        tol: 같은 행으로 보는 top 차이의 상한(미만).
+
+    Returns:
+        `|w["top"] - top| < tol`인 단어 dict 목록(입력 순서 유지).
+    """
     return [w for w in words if abs(w["top"] - top) < tol]
 
 
 def _groups(row, gap=14):
-    """같은 행의 단어를 x 인접성으로 묶습니다."""
+    """같은 행의 단어를 x 인접성으로 묶습니다.
+
+    Args:
+        row: 같은 행에 속한 pdfplumber 단어 dict 목록.
+        gap: 앞 단어 `x1`과 다음 단어 `x0`의 간격이 이 값 미만이면 같은 묶음.
+
+    Returns:
+        x0 순으로 정렬된 단어 묶음(단어 dict 리스트)의 리스트.
+    """
     out = []
     for w in sorted(row, key=lambda w: w["x0"]):
         if out and w["x0"] - out[-1][-1]["x1"] < gap:
@@ -87,7 +140,14 @@ def _groups(row, gap=14):
 
 
 def _day_type(text):
-    """제목 괄호의 운행일. 운행일 단어가 없으면 본문에서 찾습니다."""
+    """제목 괄호의 운행일. 운행일 단어가 없으면 본문에서 찾습니다.
+
+    Args:
+        text: 페이지 전체 텍스트.
+
+    Returns:
+        `DAY_TOKENS` 중 하나. 어디에도 없으면 "평일".
+    """
     for m in re.finditer(r"』\s*시간표\s*\(([^)]*)\)", text):
         g = m.group(1).replace(" ", "")
         for d in DAY_TOKENS:
@@ -101,7 +161,15 @@ def _day_type(text):
 
 
 def _norm_day(text, fallback):
-    """머리글 조각에서 운행일을 고릅니다. 병합 셀 때문에 잘렸으면 fallback."""
+    """머리글 조각에서 운행일을 고릅니다. 병합 셀 때문에 잘렸으면 fallback.
+
+    Args:
+        text: 머리글 셀 텍스트(None 허용).
+        fallback: 운행일 단어가 없을 때 돌려줄 값.
+
+    Returns:
+        `DAY_TOKENS` 중 처음 발견된 운행일 또는 `fallback`.
+    """
     t = (text or "").replace(" ", "")
     for d in DAY_TOKENS:
         if d in t:
@@ -110,7 +178,15 @@ def _norm_day(text, fallback):
 
 
 def _period(text):
-    """페이지 텍스트의 운행 기간을 (MM-DD, MM-DD)로. 없으면 (None, None)."""
+    """페이지 텍스트의 운행 기간을 (MM-DD, MM-DD)로. 없으면 (None, None).
+
+    Args:
+        text: 페이지 전체 텍스트.
+
+    Returns:
+        (시작, 종료) `MM-DD` 문자열 쌍. 기간이 없거나 월·일 범위를 벗어나면
+        (None, None).
+    """
     m = PERIOD.search(text)
     if not m:
         return None, None
@@ -121,7 +197,14 @@ def _period(text):
 
 
 def _canon_direction(text):
-    """머리글 조각에서 장소를 등장 순서대로 뽑아 'A → B'로 만듭니다."""
+    """머리글 조각에서 장소를 등장 순서대로 뽑아 'A → B'로 만듭니다.
+
+    Args:
+        text: 방향이 적힌 머리글 텍스트(None 허용).
+
+    Returns:
+        장소가 2곳 이상이면 " → "로 이은 방향 문자열, 아니면 None.
+    """
     t = (text or "").replace(" ", "")
     hits, taken = [], set()
     for pat, name in PLACES:
@@ -144,7 +227,18 @@ def _canon_direction(text):
 
 
 def _trip(direction, day_type, departure_time, end=None, note=None):
-    """ParsedTrip 과 같은 모양의 dict. 운행 기간은 페이지 단위로 나중에 채웁니다."""
+    """ParsedTrip 과 같은 모양의 dict. 운행 기간은 페이지 단위로 나중에 채웁니다.
+
+    Args:
+        direction: 방향 문자열.
+        day_type: 운행일.
+        departure_time: 출발 시각 `HH:MM`.
+        end: 수시운행 종료 시각. 있으면 kind 가 "frequent", 없으면 "fixed".
+        note: 비고.
+
+    Returns:
+        운행편 dict. 운행 기간·탑승 장소 등은 None 으로 둡니다.
+    """
     return {
         "kind": "frequent" if end else "fixed",
         "direction": direction,
@@ -164,7 +258,16 @@ def _trip(direction, day_type, departure_time, end=None, note=None):
 
 
 def _hour_column(page, words):
-    """'시간' 머리글 좌우의 세로 괘선 → 시 열 x범위."""
+    """'시간' 머리글 좌우의 세로 괘선 → 시 열 x범위.
+
+    Args:
+        page: pdfplumber 페이지.
+        words: 페이지의 pdfplumber 단어 dict 목록.
+
+    Returns:
+        (시 열 왼쪽 x, 오른쪽 x, 머리글 top). 좌우 괘선이 모두 있는 '시간'
+        머리글이 없으면 None.
+    """
     for h in [w for w in words if w["text"].strip() == "시간"]:
         cx = _cx(h)
         vs = _vlines(page)
@@ -176,7 +279,16 @@ def _hour_column(page, words):
 
 
 def _grid_bottom(page, words, top0):
-    """격자표 하단 = 2캠 표 머리글 위. 없으면 2캠 표 숫자까지 빨려 들어옵니다."""
+    """격자표 하단 = 2캠 표 머리글 위. 없으면 2캠 표 숫자까지 빨려 들어옵니다.
+
+    Args:
+        page: pdfplumber 페이지.
+        words: 페이지의 pdfplumber 단어 dict 목록.
+        top0: 격자표 머리글 top. 이보다 아래의 '2캠' 단어만 봅니다.
+
+    Returns:
+        가장 위 '2캠' 단어의 top. 없으면 페이지 높이.
+    """
     cam = [
         w["top"]
         for w in words
@@ -186,6 +298,16 @@ def _grid_bottom(page, words, top0):
 
 
 def _parse_grid(page, words, day_type, out):
+    """(A) 시-분 격자표를 읽어 운행편을 `out`에 추가합니다.
+
+    시 열 좌측은 하교(`DIR_OUT`), 우측은 등교(`DIR_IN`)로 가릅니다.
+
+    Args:
+        page: pdfplumber 페이지.
+        words: 페이지의 pdfplumber 단어 dict 목록.
+        day_type: 페이지 기본 운행일.
+        out: 운행편 dict 를 제자리에서 추가할 출력 리스트.
+    """
     hc = _hour_column(page, words)
     if not hc:
         return
@@ -255,6 +377,13 @@ def _arrival_board(text, last, direction, day_type, out):
 
     정시 출발이 아니라 들어오는 버스를 타는 구간이라 막차 1편으로 두면 그 앞 시간대가
     통째로 사라집니다. 시작 시각('N시 이후')과 막차가 둘 다 있을 때만 바꿉니다.
+
+    Args:
+        text: 한쪽(하교 또는 등교) 칸에서 모은 텍스트.
+        last: 같은 쪽의 막차 운행편 dict. 없으면 None.
+        direction: 해당 쪽의 방향 문자열.
+        day_type: 운행일.
+        out: 운행편 dict 목록. `last`를 제거하고 구간 1건을 제자리에서 추가합니다.
     """
     start = re.search(r"(\d{1,2})시\s*이후", text)
     if "도착버스" not in text.replace(" ", "") or not start or last is None:
@@ -275,11 +404,26 @@ def _arrival_board(text, last, direction, day_type, out):
 
 
 def _cam_direction(header):
+    """2캠 표 머리글을 방향 문자열로 바꿉니다.
+
+    Args:
+        header: 열 머리글 텍스트(None 허용).
+
+    Returns:
+        장소 2곳 이상이면 정규화된 방향, 아니면 공백을 뗀 원문(None 이면 빈 문자열).
+    """
     return _canon_direction(header) or (header or "").strip()
 
 
 def _parse_departure_cols(page, words, out, day):
-    """(C) '<장소> 출발' 열 머리글 + 'A ↔ B' 그룹 머리글."""
+    """(C) '<장소> 출발' 열 머리글 + 'A ↔ B' 그룹 머리글.
+
+    Args:
+        page: pdfplumber 페이지(현재 본문에서는 쓰지 않음).
+        words: 페이지의 pdfplumber 단어 dict 목록.
+        out: 운행편 dict 를 제자리에서 추가할 출력 리스트.
+        day: 운행일.
+    """
     dep = [w for w in words if w["text"].strip() == "출발"]
     if not dep:
         return
@@ -332,6 +476,17 @@ def _parse_departure_cols(page, words, out, day):
 
 
 def _parse_cam(page, words, out, grid_bottom, page_day):
+    """(B)/(C) 2캠 표를 읽어 운행편을 `out`에 추가합니다.
+
+    방향 머리글 화살표 행을 못 찾으면 (C) 방식(`_parse_departure_cols`)으로 넘깁니다.
+
+    Args:
+        page: pdfplumber 페이지.
+        words: 페이지의 pdfplumber 단어 dict 목록.
+        out: 운행편 dict 를 제자리에서 추가할 출력 리스트.
+        grid_bottom: 격자표 머리글 top. 격자표가 없으면 None(그 아래 '2캠'만 인정).
+        page_day: 페이지 기본 운행일.
+    """
     cam = [
         w["top"]
         for w in words
@@ -377,7 +532,16 @@ def _parse_cam(page, words, out, grid_bottom, page_day):
 
 
 def _cam_cols(hdr, bounds, width):
-    """2캠 표 머리글 → [(x0, x1, 방향)] 열 목록."""
+    """2캠 표 머리글 → [(x0, x1, 방향)] 열 목록.
+
+    Args:
+        hdr: 머리글 행의 pdfplumber 단어 dict 목록.
+        bounds: 열 경계 x 좌표(0, 세로 괘선들, 페이지 너비 순).
+        width: 페이지 너비.
+
+    Returns:
+        (열 왼쪽 x, 오른쪽 x, 방향 문자열) 튜플 리스트.
+    """
     # 괘선이 머리글 한가운데('본교' | '출발⇒제2캠')를 가르는 문서가 있어,
     # 머리글을 단어 간격으로 먼저 묶은 뒤 열에 배정합니다.
     # 반대로 머리글 사이가 좁아 여러 열이 한 묶음이 되면(26년 2학기) 방향이 깨지므로,
@@ -410,7 +574,15 @@ def _cam_cols(hdr, bounds, width):
 
 
 def _col_of(cols, w):
-    """단어가 속한 열 번호. 어느 열에도 안 들면 중심이 가장 가까운 열."""
+    """단어가 속한 열 번호. 어느 열에도 안 들면 중심이 가장 가까운 열.
+
+    Args:
+        cols: `_cam_cols` 가 만든 (x0, x1, 방향) 열 목록.
+        w: pdfplumber 단어 dict.
+
+    Returns:
+        `cols` 안의 열 인덱스.
+    """
     hit = next((i for i, c in enumerate(cols) if c[0] <= _cx(w) <= c[1]), None)
     if hit is not None:
         return hit
@@ -420,9 +592,27 @@ def _col_of(cols, w):
 
 
 def _cam_body(body, cols, days, out):
-    """머리글 아래 셀을 줄 단위로 읽습니다. 괄호 안 시각은 운행편으로 세지 않습니다."""
+    """머리글 아래 셀을 줄 단위로 읽습니다. 괄호 안 시각은 운행편으로 세지 않습니다.
+
+    Args:
+        body: 머리글 아래 pdfplumber 단어 dict 목록.
+        cols: (x0, x1, 방향) 열 목록.
+        days: 열마다 (운행일, 운행일 비고). `cols`와 같은 길이.
+        out: 운행편 dict 를 제자리에서 추가할 출력 리스트.
+    """
 
     def emit(i, direction, hh, mm):
+        """해당 열의 운행일·비고로 운행편을 만들어 `out`에 추가하고 돌려줍니다.
+
+        Args:
+            i: 열 인덱스.
+            direction: 방향 문자열.
+            hh: 시.
+            mm: 분.
+
+        Returns:
+            추가한 운행편 dict.
+        """
         t = _trip(direction, days[i][0], _hhmm(hh, mm))
         t["day_note"] = days[i][1]
         out.append(t)
@@ -459,6 +649,13 @@ def _unmark(row, k):
 
     '★8:30', '★ 8:30'처럼 표시가 붙은 운행 시각은 살리고, 표시 뒤에 안내문이
     오는 줄만 각주로 봅니다.
+
+    Args:
+        row: 한 줄의 pdfplumber 단어 dict 목록(x0 순).
+        k: 대상 단어의 `row` 인덱스.
+
+    Returns:
+        표시를 뗀 텍스트(표시가 없으면 원문). 각주면 None.
     """
     text = row[k]["text"]
     if not text.startswith(("★", "※")):
@@ -471,12 +668,27 @@ def _unmark(row, k):
 
 
 def _times(text):
-    """텍스트 속 유효한 HH:MM 목록(시 0~23, 분 0~59)."""
+    """텍스트 속 유효한 HH:MM 목록(시 0~23, 분 0~59).
+
+    Args:
+        text: 검색할 텍스트.
+
+    Returns:
+        (시, 분) 문자열 튜플 리스트.
+    """
     return VALID_TIME.findall(text)
 
 
 def _rows(words, tol=4):
-    """단어를 줄(top 근접) 단위로 묶어 x 순으로 정렬합니다."""
+    """단어를 줄(top 근접) 단위로 묶어 x 순으로 정렬합니다.
+
+    Args:
+        words: pdfplumber 단어 dict 목록.
+        tol: 줄 첫 단어와 top 차이가 이 값 미만이면 같은 줄.
+
+    Returns:
+        줄마다 x0 순으로 정렬된 단어 dict 리스트의 리스트(위에서 아래 순).
+    """
     rows: list[list[dict]] = []
     for w in sorted(words, key=lambda w: (w["top"], w["x0"])):
         if rows and w["top"] - rows[-1][0]["top"] < tol:
@@ -493,6 +705,13 @@ def _cam_paren(paren, i, cols, last, emit):
     - '(정왕역출발 8:55, 9시 )'는 그 열 방향의 출발지 앞에 '정왕역'을 붙인 방향의
       운행편입니다(본교 ⇒ 2캠 열이면 정왕역 → 본교 → 제2캠퍼스). 원문 각주
       '★ (정왕역출발 8:55, 9시 ) → 본교 운동장옆(서문) 건너편 … → 2캠퍼스'와 같습니다.
+
+    Args:
+        paren: 괄호가 열린 셀의 단어 dict 목록.
+        i: 열 인덱스.
+        cols: (x0, x1, 방향) 열 목록.
+        last: 열 인덱스 → 그 열 직전 운행편 dict. 비고를 제자리에서 갱신합니다.
+        emit: 운행편을 만들어 추가하는 콜백 `(열 인덱스, 방향, 시, 분)`.
     """
     text = " ".join(w["text"] for w in paren)
     times = _times(text) + [
@@ -511,7 +730,16 @@ def _cam_paren(paren, i, cols, last, emit):
 
 
 def _vlines_at(page, y):
-    """y 높이를 가로지르는 세로 괘선의 x 목록."""
+    """기준 높이 y를 가로지르는 세로 괘선의 x 목록.
+
+    Args:
+        page: pdfplumber 페이지.
+        y: 기준 높이(top 좌표계).
+
+    Returns:
+        `top <= y <= bottom`인 세로 괘선의 x0(소수 첫째 자리)를 중복 없이
+        오름차순으로 모은 리스트.
+    """
     return sorted(
         {
             round(ln["x0"], 1)
@@ -527,6 +755,16 @@ def _cam_days(page, region, hdr_top, cols, page_day):
     '평 일'처럼 글자가 띄어져 있거나 '토요일 (일학습병행학부)'가 두 열에 걸쳐 있어,
     열 x범위만으로 고르면 표 제목 '(평일, 토요일)'이나 엉뚱한 칸을 읽습니다.
     칸 위·아래 가로 괘선이 없으면 운행일은 페이지 기본값입니다.
+
+    Args:
+        page: pdfplumber 페이지.
+        region: 2캠 표 영역의 pdfplumber 단어 dict 목록.
+        hdr_top: 방향 머리글 행의 top.
+        cols: (x0, x1, 방향) 열 목록.
+        page_day: 페이지 기본 운행일.
+
+    Returns:
+        `cols` 순서대로 (운행일, 괄호 안 운행일 비고 또는 None) 리스트.
     """
     above = [h for h in _hlines(page) if h < hdr_top - 1]
     h1 = above[-1] if above else None
@@ -547,7 +785,14 @@ def _cam_days(page, region, hdr_top, cols, page_day):
 
 
 def _notes(text):
-    """표 밖 안내문. '소요시간 …' 줄과 '•' 글머리 줄(표 제목 『』 제외)만 모읍니다."""
+    """표 밖 안내문. '소요시간 …' 줄과 '•' 글머리 줄(표 제목 『』 제외)만 모읍니다.
+
+    Args:
+        text: 페이지 전체 텍스트.
+
+    Returns:
+        운행 기간 표기를 지우고 다듬은 비어 있지 않은 안내문 목록.
+    """
     out = []
     for raw in text.splitlines():
         line = raw.strip()
@@ -560,6 +805,12 @@ def _header_days(text):
     """표 머리에 적힌 운행일. 본문 안내('토요일 운휴' 등)는 세지 않습니다.
 
     표 제목 괄호('』시간표 (평일, 토요일)')와 운행일만 있는 줄('평 일 토요일')만 봅니다.
+
+    Args:
+        text: 페이지 전체 텍스트.
+
+    Returns:
+        발견한 운행일(`DAY_TOKENS` 원소)의 집합.
     """
     found = set()
     for m in re.finditer(r"』\s*시간표\s*\(([^)]*)\)", text):
@@ -579,6 +830,14 @@ def parse_shuttle_pdf(
 
     운행일 목록은 표 머리에 적힌 것만 모으며, 파싱 직후 검증('토요일' 머리글이 있으면
     토요일 편이 있어야 함)에 씁니다.
+
+    Args:
+        data: PDF 파일 바이트.
+
+    Returns:
+        (첫 페이지 첫 줄 제목 또는 None, 방향이 `SHUTTLE_DIRECTIONS`에 속하는
+        운행편 dict 목록, 표 밖 안내문 목록, 정렬된 머리글 운행일 목록).
+        방향을 확정하지 못한 편은 제외하고 개수만 경고 로그로 남깁니다.
     """
     trips: list[dict] = []
     notes: list[str] = []

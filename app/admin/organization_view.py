@@ -26,11 +26,22 @@ class OrganizationAdminView(BaseView):
         self,
         request: Request,
         text: str | None = None,
-        status: int = 200,
+        status: int = Config.HttpStatus.OK,
         error: str | None = None,
         message: str | None = None,
     ) -> Response:
-        """text가 None이면 현재 파일을 읽어 보여 줍니다."""
+        """조직도 편집 화면을 렌더링합니다.
+
+        Args:
+            request: 현재 요청.
+            text: 편집기에 채울 JSON 원문. None이면 현재 파일을 읽어 보여 준다.
+            status: 응답 상태 코드.
+            error: 화면에 표시할 오류 메시지.
+            message: 화면에 표시할 안내 메시지.
+
+        Returns:
+            템플릿 응답.
+        """
         if text is None:
             try:
                 with open(Config.SCHOOL_INFO_PATH, encoding="utf-8") as f:
@@ -68,12 +79,14 @@ class OrganizationAdminView(BaseView):
         """저장하지 않고 검증만 합니다."""
         form = await request.form()
         if not verify_csrf(request, str(form.get("csrf_token") or "")):
-            return Response("CSRF 검증 실패", status_code=403)
+            return Response("CSRF 검증 실패", status_code=Config.HttpStatus.FORBIDDEN)
         text = str(form.get("content") or "")
         try:
             parse_school_info(text)
         except ValueError as exc:
-            return await self._render(request, text, 400, error=str(exc))
+            return await self._render(
+                request, text, Config.HttpStatus.BAD_REQUEST, error=str(exc)
+            )
         return await self._render(request, text, message="검증 통과 (저장 전)")
 
     @expose("/organization/save", methods=["POST"], identity="organization_save")
@@ -81,19 +94,23 @@ class OrganizationAdminView(BaseView):
         """검증 후 원자적으로 저장합니다."""
         form = await request.form()
         if not verify_csrf(request, str(form.get("csrf_token") or "")):
-            return Response("CSRF 검증 실패", status_code=403)
+            return Response("CSRF 검증 실패", status_code=Config.HttpStatus.FORBIDDEN)
         text = str(form.get("content") or "")
         try:
             save_school_info(text, Config.SCHOOL_INFO_PATH, admin_sub(request))
         except ValueError as exc:
-            return await self._render(request, text, 400, error=str(exc))
+            return await self._render(
+                request, text, Config.HttpStatus.BAD_REQUEST, error=str(exc)
+            )
         except OSError as exc:
             logger.error("조직도 저장 실패: %s", exc)
             return await self._render(
                 request,
                 text,
-                200,
+                Config.HttpStatus.OK,
                 error=f"저장하지 못했습니다(쓰기 불가 경로일 수 있음): {exc}",
             )
-        log_admin_action(request, "organization_save", Config.SCHOOL_INFO_PATH)
+        log_admin_action(
+            request, "organization.school_info.save", Config.SCHOOL_INFO_PATH
+        )
         return await self._render(request, message="저장했습니다.")

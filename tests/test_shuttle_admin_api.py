@@ -13,9 +13,9 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi.testclient import TestClient
 
 from app.config import Config
-from app.routers import bus
+from app.services import shuttle as shuttle_service
 from app.utils import keycloak_auth
-from app.utils import shuttle_timetable as st
+from app.services import shuttle_sync as syn
 from main import app
 
 KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
@@ -119,7 +119,7 @@ def test_crud_flow_reflects_public(caplog: pytest.LogCaptureFixture) -> None:
     ids = [t["id"] for t in doc["trips"]]
     assert len(set(ids)) == 3
     assert api.post(BASE, json=BODY, headers=ADMIN).status_code == 409
-    assert "admin_audit sub=shuttle-sub action=shuttle_admin.create" in caplog.text
+    assert "admin_audit sub=shuttle-sub action=shuttle.document.create" in caplog.text
 
     listed = api.get(BASE, headers=ADMIN).json()
     assert [d["place"] for d in listed] == [PLACE]
@@ -231,15 +231,15 @@ def test_invalid_meta_422() -> None:
 
 def _ingest(monkeypatch: pytest.MonkeyPatch, content: bytes, parse: Any = None) -> Any:
     monkeypatch.setattr(
-        st, "fetch_shuttle_pdf", AsyncMock(return_value=(PDF_PLACE, "u", content))
+        syn, "fetch_shuttle_pdf", AsyncMock(return_value=(PDF_PLACE, "u", content))
     )
     if parse is not None:
-        monkeypatch.setattr(st, "parse_shuttle_pdf", parse)
-    return asyncio.run(st.ingest_shuttle_pdf())
+        monkeypatch.setattr(syn, "parse_shuttle_pdf", parse)
+    return asyncio.run(syn.ingest_shuttle_pdf())
 
 
 def _broken_parse(monkeypatch: pytest.MonkeyPatch) -> Any:
-    title, trips, notes, _ = st.parse_shuttle_pdf(PDF.read_bytes())
+    title, trips, notes, _ = syn.parse_shuttle_pdf(PDF.read_bytes())
     broken = [t for t in trips if t["day_type"] != "토요일"]
     return lambda _: (title, broken, notes, ["토요일"])
 
@@ -340,7 +340,7 @@ def test_audit_log_escapes_target(caplog: pytest.LogCaptureFixture) -> None:
     line = next(
         r.getMessage()
         for r in caplog.records
-        if "shuttle_admin.create" in r.getMessage()
+        if "shuttle.document.create" in r.getMessage()
     )
     assert line.endswith('target="x\\" action=forged"')
 
@@ -377,7 +377,7 @@ def test_if_match_conflict_412() -> None:
 
 def test_force_refresh_requires_global_admin(monkeypatch: pytest.MonkeyPatch) -> None:
     sync = AsyncMock(return_value=[])
-    monkeypatch.setattr(bus, "sync_shuttle_timetables", sync)
+    monkeypatch.setattr(shuttle_service, "sync_shuttle_timetables", sync)
     refresh = "/bus/timetable/refresh"
     assert api.post(refresh, params={"force": "true"}, headers=ADMIN).status_code == 403
     assert api.post(refresh, headers=ADMIN).status_code == 202
@@ -487,3 +487,27 @@ def test_if_match_on_trip_post_delete_and_doc_delete() -> None:
         api.delete(f"{BASE}/{PLACE}", headers={**ADMIN, "If-Match": rev}).status_code
         == 204
     )
+
+
+def test_admin_writes_accumulate_in_audit_table() -> None:
+    from sqlalchemy import select
+
+    from app.database import SessionLocal
+    from app.models.admin_audit import AdminAuditLog
+
+    created = api.post(BASE, json=BODY, headers=ADMIN).json()
+    trip_id = created["trips"][0]["id"]
+    assert (
+        api.delete(f"{BASE}/{PLACE}/trips/{trip_id}", headers=ADMIN).status_code == 204
+    )
+    assert api.delete(f"{BASE}/{PLACE}", headers=ADMIN).status_code == 204
+    with SessionLocal() as db:
+        rows = db.scalars(
+            select(AdminAuditLog).where(AdminAuditLog.target.like(f"{PLACE}%"))
+        ).all()
+    actions = {r.action for r in rows}
+    assert {
+        "shuttle.document.create",
+        "shuttle.trip.delete",
+        "shuttle.document.delete",
+    } <= actions

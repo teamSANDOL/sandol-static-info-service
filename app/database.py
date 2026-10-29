@@ -21,10 +21,8 @@ SessionLocal = sessionmaker(engine, expire_on_commit=False)
 
 
 def init_db() -> None:
-    """저장 디렉터리와 테이블이 없으면 생성합니다."""
-    # 모델을 import해야 Base.metadata에 테이블이 등록된다.
-    from app.models import tuk_world  # noqa: F401
+    """이미지 저장 디렉터리(와 그 상위 DB 디렉터리)를 만듭니다.
 
+    스키마는 만들지 않습니다. `alembic upgrade head`가 담당합니다.
+    """
     os.makedirs(Config.TUK_WORLD_IMAGE_DIR, exist_ok=True)
-    # ponytail: create_all만 사용. 컬럼 변경이 생기면 alembic 도입.
-    Base.metadata.create_all(engine)
