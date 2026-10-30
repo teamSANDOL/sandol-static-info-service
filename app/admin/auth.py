@@ -1,9 +1,11 @@
 """Keycloak OIDC 기반 sqladmin 관리자 인증.
 
 /static-info/admin 은 Keycloak 로그인(Authorization Code + PKCE) 후
-KC_ADMIN_ROLE(realm role)을 가진 계정만 들어올 수 있다. 롤 판정은 쓰기 API와 같은
-`app.utils.keycloak_auth.require_admin`(JWKS 서명 검증)을 그대로 쓴다.
-세션은 Fernet으로 암호화한 쿠키(sub, exp)이며, 롤은 로그인할 때만 확인한다.
+KC_ADMIN_ROLE 또는 shuttle_admin 등 Config.SHUTTLE_ADMIN_ROLES(realm role)를 가진
+계정이 들어올 수 있고, 롤 판정은 쓰기 API와 같은 JWKS 서명 검증을 쓴다.
+shuttle_admin은 "셔틀 시간표" 메뉴만 쓰고 나머지 메뉴는 KC_ADMIN_ROLE(full_admin)만 쓴다.
+세션은 Fernet으로 암호화한 쿠키(sub, exp, full_admin)이며, 롤은 로그인할 때만 확인한다.
+full_admin 키가 없는 기존 세션은 셔틀 전용으로 취급하므로 재로그인해야 한다.
 """
 
 import base64
@@ -25,7 +27,7 @@ from starlette.responses import RedirectResponse, Response
 
 from app.config import Config, logger
 from app.utils.audit import arecord_audit
-from app.utils.keycloak_auth import expected_issuer, require_admin
+from app.utils.keycloak_auth import expected_issuer, shuttle_admin_identity
 
 # kakao-bot 관리자 쿠키(sandol_admin_session)와 같은 도메인을 쓰므로 이름을 구분한다.
 SESSION_COOKIE = "sandol_static_info_admin_session"
@@ -192,6 +194,39 @@ def admin_sub(request: Request) -> str | None:
     return sub if isinstance(sub, str) and sub else None
 
 
+def is_full_admin(request: Request) -> bool:
+    """세션이 KC_ADMIN_ROLE 보유자(전체 메뉴 허용)인지.
+
+    full_admin 키가 없거나 bool True가 아니면 False(fail-closed).
+    """
+    data = _decrypt(request.cookies.get(SESSION_COOKIE))
+    return data is not None and data.get("full_admin") is True
+
+
+class FullAdminOnly:
+    """셔틀 외 메뉴용 믹스인. 전체 관리자 세션이 아니면 메뉴를 숨기고 접근을 막는다."""
+
+    def is_accessible(self, request: Request) -> bool:
+        """sqladmin이 ModelView 라우트에서 호출하며, False면 403을 낸다."""
+        return is_full_admin(request)
+
+    def is_visible(self, request: Request) -> bool:
+        """전체 관리자에게만 메뉴를 보여 줍니다."""
+        return is_full_admin(request)
+
+
+def require_full_admin(request: Request) -> None:
+    """BaseView의 @expose 핸들러용 검사.
+
+    sqladmin은 BaseView 라우트에서 is_accessible을 호출하지 않는다.
+
+    Raises:
+        HTTPException: 전체 관리자 세션이 아니면 403.
+    """
+    if not is_full_admin(request):
+        raise HTTPException(Config.HttpStatus.FORBIDDEN, "full_admin_required")
+
+
 def csrf_token(request: Request) -> str:
     """현재 세션에 묶인 CSRF 토큰. 커스텀 뷰 폼의 hidden 필드에 넣는다.
 
@@ -283,7 +318,7 @@ async def admin_oauth_callback(
 
     Raises:
         HTTPException: 로그인 오류·state 불일치·토큰 교환 실패면 401.
-            관리자 롤이 없으면 require_admin이 403을 올린다.
+            관리자·셔틀 관리자 롤이 모두 없으면 403.
     """
     if error:
         logger.warning("관리자 로그인 콜백 오류: %s", error)
@@ -307,9 +342,9 @@ async def admin_oauth_callback(
         ) from exc
 
     # 쓰기 API와 같은 검증(JWKS 서명, iss, realm role)을 그대로 쓴다.
-    # require_admin은 PyJWKClient의 동기 HTTP를 쓰므로 이벤트 루프 밖에서 실행한다.
-    sub = await run_in_threadpool(
-        require_admin,
+    # PyJWKClient의 동기 HTTP를 쓰므로 이벤트 루프 밖에서 실행한다.
+    sub, roles = await run_in_threadpool(
+        shuttle_admin_identity,
         HTTPAuthorizationCredentials(scheme="Bearer", credentials=access_token),
     )
 
@@ -321,7 +356,11 @@ async def admin_oauth_callback(
         response,
         SESSION_COOKIE,
         _encrypt(
-            {"sub": sub, "exp": int(time.time()) + Config.ADMIN_SESSION_TTL_SECONDS}
+            {
+                "sub": sub,
+                "exp": int(time.time()) + Config.ADMIN_SESSION_TTL_SECONDS,
+                "full_admin": Config.KC_ADMIN_ROLE in roles,
+            }
         ),
         Config.ADMIN_SESSION_TTL_SECONDS,
     )

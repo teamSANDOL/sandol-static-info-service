@@ -41,6 +41,7 @@ def client(monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
     assert mount_admin(app) is not None
     # 로그인 흐름은 test_admin_auth.py가 검증한다. 여기서는 세션만 있다고 가정한다.
     monkeypatch.setattr(admin_auth, "admin_sub", lambda r: "admin-sub")
+    monkeypatch.setattr(admin_auth, "is_full_admin", lambda r: True)
     c = TestClient(app, base_url="https://testserver", follow_redirects=False)
     yield c
     with SessionLocal() as db:

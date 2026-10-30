@@ -16,7 +16,13 @@ from starlette.requests import Request
 from starlette.responses import RedirectResponse, Response
 
 from app.config import Config
-from app.admin.auth import admin_sub, csrf_token, log_admin_action, verify_csrf
+from app.admin.auth import (
+    admin_sub,
+    csrf_token,
+    is_full_admin,
+    log_admin_action,
+    verify_csrf,
+)
 from app.schemas.shuttle import DayType, Direction, ParsedTrip, TripKind
 from app.services.shuttle_store import (
     delete_timetable,
@@ -151,6 +157,7 @@ class ShuttleAdminView(BaseView):
             {
                 "base": request.url_for("admin:shuttle").path,
                 "csrf_token": csrf_token(request),
+                "full_admin": is_full_admin(request),
                 "msg": request.query_params.get("msg"),
                 **ctx,
             },
@@ -247,6 +254,11 @@ class ShuttleAdminView(BaseView):
             목록 화면으로의 리다이렉트.
         """
         force = bool(form.get("force"))
+        # Bearer API와 같은 규칙: force는 KC_ADMIN_ROLE 전용(감사 로그도 남기지 않는다).
+        if force and not is_full_admin(request):
+            return self._back(
+                request, msg="강제 동기화는 전체 관리자만 사용할 수 있습니다."
+            )
         await log_admin_action(request, "shuttle.timetable.refresh", f"force={force}")
         updated = await sync_shuttle_timetables(force)
         msg = (

@@ -152,6 +152,6 @@ trip 1건의 필드: `route`, `direction`, `origin`, `destination`, `via[]`, `da
 2. 서버 `sandol-static-info-service/.env`(루트 compose의 env_file)에 `ADMIN_PANEL_ENABLED=true`, `KC_CLIENT_ID`, `KC_CLIENT_SECRET`, `ADMIN_SESSION_KEY`(Fernet 키)를 넣습니다. `STATIC_INFO_PUBLIC_BASE_URL`, `KC_SERVER_URL`, `KC_JWKS_URL`, `KC_TOKEN_URL`, `DATA_DIR`, `SCHOOL_INFO_PATH`는 루트 compose가 `SERVICE_DOMAIN` 기준으로 채웁니다.
 3. `docker compose up -d --no-deps static-info-service`로 재생성합니다.
 
-값이 하나라도 비어 있으면 관리자 화면은 마운트되지 않고 `/static-info/admin`은 404입니다(fail-closed). 로그인은 `global_admin` 롤이 있는 계정만 성공하고, 롤은 로그인할 때만 확인하므로 롤을 회수해도 세션 수명(`ADMIN_SESSION_TTL_SECONDS`, 기본 3600초) 동안은 접근이 남습니다.
+값이 하나라도 비어 있으면 관리자 화면은 마운트되지 않고 `/static-info/admin`은 404입니다(fail-closed). 로그인은 `global_admin` 또는 `shuttle_admin` 롤이 있는 계정만 성공하며, `shuttle_admin`은 "셔틀 시간표" 메뉴만 쓸 수 있고(제휴 식당·식당 이미지·조직도·감사 로그는 `global_admin` 전용, force 동기화도 `global_admin` 전용) 로그인 이전 세션은 재로그인이 필요합니다. 롤 판정은 로그인할 때만 하고, 롤을 회수해도 세션 수명(`ADMIN_SESSION_TTL_SECONDS`, 기본 3600초) 동안은 접근이 남습니다.
 
 게이트웨이는 `X-Forwarded-Proto: https`를 보내고, 컨테이너의 uvicorn은 `--proxy-headers --forwarded-allow-ips=*`로 그 값을 믿어 관리자 화면 링크를 https로 만듭니다. TUK World 이미지 업로드(앱 한도 5MB)를 위해 게이트웨이 `client_max_body_size`는 6m입니다.
