@@ -114,7 +114,7 @@ class BookDownloader:
         Raises:
             FetchError: 목록에 파일이 없을 때.
         """
-        root = ElementTree.fromstring(file_list_content)
+        root = ElementTree.fromstring(file_list_content)  # noqa: S314 - iBook 공식 서버 응답
         for file in root.findall("file"):
             file_name = file.attrib["name"]
             self.file_name = file_name
@@ -209,7 +209,7 @@ class BookDownloader:
         Args:
             file_name: 저장 경로. None이면 목록의 파일명 또는 기본 경로.
         """
-        file_name = file_name or self.file_name or "/tmp/data.xlsx"
+        file_name = file_name or self.file_name or "/tmp/data.xlsx"  # noqa: S108 - 기존 기본 경로 유지
         await self.fetch_bookcode()
         file_list = await self.fetch_file_list()
         file_url = self.get_file_url(file_list)

@@ -69,7 +69,7 @@ async def health_check():
 
 
 if __name__ == "__main__":
-    HOST = "0.0.0.0"
+    HOST = "0.0.0.0"  # noqa: S104 - 컨테이너 안에서 외부 접속을 받아야 함
     PORT = 5600
 
     logger.info("Starting Sandol server on %s:%s", HOST, PORT)
