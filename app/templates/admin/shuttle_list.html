@@ -1,0 +1,56 @@
+{% extends "sqladmin/layout.html" %}
+{% block content %}
+<div class="col-12">
+  {% if msg %}<div class="alert alert-info">{{ msg }}</div>{% endif %}
+  <div class="card">
+    <div class="card-header">
+      <h3 class="card-title">셔틀 시간표</h3>
+      <div class="card-actions d-flex gap-2">
+        <a class="btn btn-primary" href="{{ base }}?new=1">새 시간표 등록</a>
+        <form method="post" action="{{ base }}" class="d-flex align-items-center gap-2"
+              onsubmit="return !this.force.checked || confirm('수동 저장본까지 PDF로 덮어씁니다. 계속할까요?');">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="action" value="sync">
+          <label class="form-check mb-0"><input class="form-check-input" type="checkbox" name="force" value="1"> 강제(수동 저장본 덮어쓰기)</label>
+          <button class="btn btn-secondary" type="submit">PDF 동기화</button>
+        </form>
+      </div>
+    </div>
+    <div class="card-body">
+      <p class="text-muted mb-0">같은 시간표 안에서는 직접 저장(user)이 PDF 파싱보다 우선합니다. 일반 동기화는 직접 저장본을 덮어쓰지 않습니다.
+        삭제하면 다음 동기화 때 현재 PDF의 시간표만 다시 생깁니다. 학기가 바뀌어 새 PDF 시간표가 생기면 옛 직접 저장본은 자동으로 지워지지 않으니 기간을 보고 정리하세요.</p>
+    </div>
+    <div class="table-responsive">
+      <table class="table table-vcenter card-table">
+        <thead><tr><th>시간표(place)</th><th>제목</th><th>출처</th><th>운행 건수</th><th>운행 기간</th><th>PDF 파싱</th><th>직접 수정</th><th></th></tr></thead>
+        <tbody>
+        {% for d in docs %}
+          {% set froms = d.trips | map(attribute='valid_from') | select | list %}
+          {% set tos = d.trips | map(attribute='valid_to') | select | list %}
+          <tr>
+            <td>{{ d.place }}</td>
+            <td>{{ d.title or "" }}</td>
+            <td>{% if d.source == "user" %}<span class="badge bg-green">직접</span>{% else %}<span class="badge bg-secondary">PDF</span>{% endif %}</td>
+            <td>{{ d.trips | length }}</td>
+            <td>{% if froms or tos %}{{ (froms | min) if froms else "" }} ~ {{ (tos | max) if tos else "" }}{% else %}상시{% endif %}</td>
+            <td>{{ d.parsed_at or "" }}</td>
+            <td>{{ d.updated_at or "" }}{% if d.updated_by %}<br><small class="text-muted">{{ d.updated_by }}</small>{% endif %}</td>
+            <td class="text-end">
+              <a class="btn btn-sm" href="{{ base }}?place={{ d.place | urlencode }}">편집</a>
+              <form method="post" action="{{ base }}" class="d-inline" onsubmit="return confirm('삭제할까요?');">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <input type="hidden" name="action" value="delete">
+                <input type="hidden" name="place" value="{{ d.place }}">
+                <button class="btn btn-sm btn-danger" type="submit">삭제</button>
+              </form>
+            </td>
+          </tr>
+        {% else %}
+          <tr><td colspan="8" class="text-muted">저장된 시간표가 없습니다.</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

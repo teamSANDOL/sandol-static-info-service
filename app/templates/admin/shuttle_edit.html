@@ -1,0 +1,62 @@
+{% extends "sqladmin/layout.html" %}
+{% macro row(i, t) %}
+<tr>
+  <td><select class="form-select form-select-sm" name="t-{{ i }}-direction">
+    {% for v in directions %}<option value="{{ v }}" {% if t.direction == v %}selected{% endif %}>{{ v }}</option>{% endfor %}
+  </select></td>
+  <td><select class="form-select form-select-sm" name="t-{{ i }}-day_type">
+    {% for v in day_types %}<option value="{{ v }}" {% if t.day_type == v %}selected{% endif %}>{{ v }}</option>{% endfor %}
+  </select></td>
+  <td><input class="form-control form-control-sm" name="t-{{ i }}-departure_time" value="{{ t.departure_time or '' }}" placeholder="08:40" size="5"></td>
+  <td><input class="form-control form-control-sm" name="t-{{ i }}-departure_time_end" value="{{ t.departure_time_end or '' }}" placeholder="10:00" size="5"></td>
+  <td><input class="form-control form-control-sm" name="t-{{ i }}-valid_from" value="{{ t.valid_from or '' }}" placeholder="09-01" size="5"></td>
+  <td><input class="form-control form-control-sm" name="t-{{ i }}-valid_to" value="{{ t.valid_to or '' }}" placeholder="12-22" size="5"></td>
+  <td><input class="form-control form-control-sm" name="t-{{ i }}-day_note" value="{{ t.day_note or '' }}"></td>
+  <td><input class="form-control form-control-sm" name="t-{{ i }}-period_note" value="{{ t.period_note or '' }}"></td>
+  <td><input class="form-control form-control-sm" name="t-{{ i }}-boarding_place" value="{{ t.boarding_place or '' }}"></td>
+  <td><input class="form-control form-control-sm" name="t-{{ i }}-note" value="{{ t.note or '' }}"></td>
+  <td><input class="form-check-input" type="checkbox" name="t-{{ i }}-delete" value="1"></td>
+</tr>
+{% endmacro %}
+{% block content %}
+<div class="col-12">
+  {% if error %}<div class="alert alert-danger">{{ error }}</div>{% endif %}
+  <form method="post" action="{{ base }}" class="card">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="action" value="save">
+    <input type="hidden" name="rows" value="{{ trips | length + blanks }}">
+    {% if is_new %}<input type="hidden" name="is_new" value="1">{% endif %}
+    <div class="card-header"><h3 class="card-title">{% if is_new %}새 시간표 등록{% else %}시간표 편집{% endif %}</h3></div>
+    <div class="card-body">
+      <div class="mb-3">
+        <label class="form-label">시간표 이름(place)</label>
+        {% if is_new %}
+        <input class="form-control" name="place" value="{{ place }}" required placeholder="예: 26년 2학기 셔틀 (직접 등록)">
+        {% else %}
+        <input class="form-control" name="place" value="{{ place }}" readonly>
+        <small class="text-muted">저장하면 직접 입력본(user)이 되어 일반 PDF 동기화가 이 시간표를 덮어쓰지 않습니다.</small>
+        {% endif %}
+      </div>
+      <div class="mb-3">
+        <label class="form-label">제목</label>
+        <input class="form-control" name="title" value="{{ doc_title or '' }}">
+      </div>
+      <p class="text-muted">출발 시각이 빈 행은 저장하지 않습니다. 시각은 HH:MM, 운행 기간은 MM-DD(비우면 상시)입니다.
+        행이 부족하면 <a href="?{% if is_new %}new=1{% else %}place={{ place | urlencode }}{% endif %}&extra=30">빈 행 30개로 다시 열기</a>(입력 중인 내용은 저장되지 않습니다).</p>
+    </div>
+    <div class="table-responsive">
+      <table class="table table-sm card-table">
+        <thead><tr><th>방향</th><th>운행일</th><th>출발</th><th>종료(수시)</th><th>시작일</th><th>종료일</th><th>운행일 비고</th><th>기간 비고</th><th>탑승 장소</th><th>비고</th><th>삭제</th></tr></thead>
+        <tbody>
+        {% for t in trips %}{{ row(loop.index0, t) }}{% endfor %}
+        {% for n in range(blanks) %}{{ row(trips | length + n, {}) }}{% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="card-footer d-flex gap-2">
+      <button class="btn btn-primary" type="submit">저장</button>
+      <a class="btn" href="{{ base }}">취소</a>
+    </div>
+  </form>
+</div>
+{% endblock %}
