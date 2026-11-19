@@ -8,10 +8,10 @@
       <div class="card-actions d-flex gap-2">
         <a class="btn btn-primary" href="{{ base }}?new=1">새 시간표 등록</a>
         <form method="post" action="{{ base }}" class="d-flex align-items-center gap-2"
-              onsubmit="return !this.force.checked || confirm('수동 저장본까지 PDF로 덮어씁니다. 계속할까요?');">
+              onsubmit="return !this.force || !this.force.checked || confirm('수동 저장본까지 PDF로 덮어씁니다. 계속할까요?');">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
           <input type="hidden" name="action" value="sync">
-          <label class="form-check mb-0"><input class="form-check-input" type="checkbox" name="force" value="1"> 강제(수동 저장본 덮어쓰기)</label>
+          {% if full_admin %}<label class="form-check mb-0"><input class="form-check-input" type="checkbox" name="force" value="1"> 강제(수동 저장본 덮어쓰기)</label>{% endif %}
           <button class="btn btn-secondary" type="submit">PDF 동기화</button>
         </form>
       </div>

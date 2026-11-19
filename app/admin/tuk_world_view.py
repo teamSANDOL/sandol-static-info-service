@@ -15,7 +15,7 @@ from starlette.requests import Request
 from wtforms import FileField, FloatField, Form
 from wtforms.validators import NumberRange, Optional, Regexp
 
-from app.admin.auth import admin_sub, log_admin_action
+from app.admin.auth import FullAdminOnly, admin_sub, log_admin_action
 from app.config import Config
 from app.database import SessionLocal
 from app.models.tuk_world import Restaurant, RestaurantImage
@@ -68,7 +68,7 @@ def _preview(model: Any, attr: Any) -> Markup:
     return _thumb(model.id)
 
 
-class RestaurantAdmin(ModelView, model=Restaurant):
+class RestaurantAdmin(FullAdminOnly, ModelView, model=Restaurant):
     """제휴 식당. 삭제하면 이미지 레코드와 파일도 함께 지운다(REST와 동일)."""
 
     name = "제휴 식당"
@@ -173,7 +173,7 @@ class RestaurantAdmin(ModelView, model=Restaurant):
         await log_admin_action(request, "tuk_world.restaurant.delete", f"id={model.id}")
 
 
-class RestaurantImageAdmin(ModelView, model=RestaurantImage):
+class RestaurantImageAdmin(FullAdminOnly, ModelView, model=RestaurantImage):
     """식당 이미지 업로드·미리보기·삭제. 수정은 막고 삭제 후 재업로드한다."""
 
     name = "식당 이미지"

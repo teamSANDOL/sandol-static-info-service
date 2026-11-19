@@ -16,14 +16,20 @@ from starlette.requests import Request
 from starlette.responses import RedirectResponse, Response
 
 from app.config import Config
-from app.admin.auth import admin_sub, csrf_token, log_admin_action, verify_csrf
-from app.schemas.shuttle import DayType, Direction, ParsedTrip
-from app.utils.shuttle_timetable import (
+from app.admin.auth import (
+    admin_sub,
+    csrf_token,
+    is_full_admin,
+    log_admin_action,
+    verify_csrf,
+)
+from app.schemas.shuttle import DayType, Direction, ParsedTrip, TripKind
+from app.services.shuttle_store import (
     delete_timetable,
     load_store,
     save_user_timetable,
-    sync_shuttle_timetables,
 )
+from app.services.shuttle_sync import sync_shuttle_timetables
 
 _TIME = re.compile(r"([01]\d|2[0-3]):[0-5]\d")
 _MD = re.compile(r"(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])")
@@ -38,6 +44,7 @@ _FIELDS = (
     "period_note",
     "boarding_place",
     "note",
+    "kind",
 )
 _BLANK_ROWS = 5
 
@@ -98,7 +105,7 @@ def parse_trips(rows: list[dict]) -> list[ParsedTrip]:
             trips.append(ParsedTrip(**row))
         except ValidationError as exc:
             raise ValueError(
-                f"{n}번째 행: 방향 또는 운행일 값이 올바르지 않습니다."
+                f"{n}번째 행: 방향·운행일·종류 값이 올바르지 않습니다(수시운행·도착버스는 종료 시각 필요)."
             ) from exc
     return trips
 
@@ -150,6 +157,7 @@ class ShuttleAdminView(BaseView):
             {
                 "base": request.url_for("admin:shuttle").path,
                 "csrf_token": csrf_token(request),
+                "full_admin": is_full_admin(request),
                 "msg": request.query_params.get("msg"),
                 **ctx,
             },
@@ -188,6 +196,7 @@ class ShuttleAdminView(BaseView):
             blanks=min(blanks, 100),
             directions=get_args(Direction),
             day_types=get_args(DayType),
+            kinds=get_args(TripKind),
             error=error,
         )
 
@@ -245,6 +254,11 @@ class ShuttleAdminView(BaseView):
             목록 화면으로의 리다이렉트.
         """
         force = bool(form.get("force"))
+        # Bearer API와 같은 규칙: force는 KC_ADMIN_ROLE 전용(감사 로그도 남기지 않는다).
+        if force and not is_full_admin(request):
+            return self._back(
+                request, msg="강제 동기화는 전체 관리자만 사용할 수 있습니다."
+            )
         await log_admin_action(request, "shuttle.timetable.refresh", f"force={force}")
         updated = await sync_shuttle_timetables(force)
         msg = (

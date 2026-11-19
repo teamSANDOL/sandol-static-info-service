@@ -2,10 +2,11 @@
 
 from sqladmin import ModelView
 
+from app.admin.auth import FullAdminOnly
 from app.models.admin_audit import AdminAuditLog
 
 
-class AuditLogAdmin(ModelView, model=AdminAuditLog):
+class AuditLogAdmin(FullAdminOnly, ModelView, model=AdminAuditLog):
     """관리자 감사 로그(읽기 전용, 최신순)."""
 
     name = "감사 로그"

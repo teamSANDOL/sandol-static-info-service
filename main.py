@@ -12,11 +12,13 @@ from app.routers import (
     bus_router,
     meal_router,
     organization_router,
+    shuttle_admin_router,
     tuk_world_router,
 )
 from app.config import Config, logger
 from app.jobs.scheduler import start_scheduler, stop_scheduler
-from app.utils.shuttle_timetable import sync_shuttle_timetables
+from app.services.holidays import refresh_holidays
+from app.services.shuttle_sync import sync_shuttle_timetables
 
 
 @asynccontextmanager
@@ -34,10 +36,12 @@ async def lifespan(app: FastAPI):
     start_scheduler()
     # 배포 직후 수동 refresh 없이도 채워지도록 기동 시 1회 동기화 (참조를 잡아둬야 GC되지 않음)
     startup_sync = asyncio.create_task(sync_shuttle_timetables())
+    startup_holidays = asyncio.create_task(refresh_holidays())
 
     yield  # FastAPI가 실행 중인 동안 유지됨
 
     startup_sync.cancel()
+    startup_holidays.cancel()
     stop_scheduler()
 
     # 애플리케이션 종료 시 로그 출력
@@ -47,6 +51,7 @@ async def lifespan(app: FastAPI):
 # lifespan 적용
 app = FastAPI(lifespan=lifespan, root_path=Config.ROOT_PATH)
 app.include_router(bus_router)
+app.include_router(shuttle_admin_router)
 app.include_router(meal_router)
 app.include_router(organization_router)
 app.include_router(tuk_world_router)
@@ -67,7 +72,7 @@ async def health_check():
 
 
 if __name__ == "__main__":
-    HOST = "0.0.0.0"
+    HOST = "0.0.0.0"  # noqa: S104 - 컨테이너 안에서 외부 접속을 받아야 함
     PORT = 5600
 
     logger.info("Starting Sandol server on %s:%s", HOST, PORT)

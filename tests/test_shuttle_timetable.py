@@ -18,7 +18,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.config.shuttle_routes import SHUTTLE_DIRECTIONS  # noqa: E402
 from app.schemas.shuttle import Direction, ParsedTrip, ShuttleTrip  # noqa: E402
-from app.utils import shuttle_timetable as st  # noqa: E402
+from app.services import shuttle_schedule as sch  # noqa: E402
+from app.services import shuttle_store as sto  # noqa: E402
+from app.services import shuttle_sync as syn  # noqa: E402
 from app.utils.shuttle_pdf import _canon_direction, _day_type, _period  # noqa: E402
 
 
@@ -69,6 +71,7 @@ PARSED = [
     },
 ]
 
+PARSE_RESULT = ("제목", PARSED, ["안내"], ["평일", "토요일"])
 PDF_BYTES = b"%PDF-1.4 fake"
 
 
@@ -111,13 +114,13 @@ def check_hash_guard():
     """같은 PDF로 두 번 ingest하면 두 번째는 파싱하지 않고 None."""
     parse = AsyncMock()
     with (
-        patch.object(st, "fetch_shuttle_pdf", _fetch(place="해시가드")),
-        patch.object(st, "parse_shuttle_pdf", return_value=("제목", PARSED)) as p,
+        patch.object(syn, "fetch_shuttle_pdf", _fetch(place="해시가드")),
+        patch.object(syn, "parse_shuttle_pdf", return_value=PARSE_RESULT) as p,
     ):
-        doc1 = asyncio.run(st.ingest_shuttle_pdf())
-        doc2 = asyncio.run(st.ingest_shuttle_pdf())
+        doc1 = asyncio.run(syn.ingest_shuttle_pdf())
+        doc2 = asyncio.run(syn.ingest_shuttle_pdf())
         assert p.call_count == 1  # 두 번째는 해시가 같아 파싱 안 함
-        doc3 = asyncio.run(st.ingest_shuttle_pdf(force=True))
+        doc3 = asyncio.run(syn.ingest_shuttle_pdf(force=True))
         assert p.call_count == 2  # force면 해시 무시
 
     assert doc1 is not None and doc2 is None and doc3 is not None
@@ -126,47 +129,49 @@ def check_hash_guard():
     # 방향 상수에서 노선 정보가 채워졌는지
     assert doc1["trips"][0]["route"] and doc1["trips"][0]["origin"] == "정왕역"
     assert parse.await_count == 0
-    asyncio.run(st.delete_timetable("해시가드"))
+    asyncio.run(sto.delete_timetable("해시가드"))
 
 
 def check_user_override():
     """사용자 수정본은 ingest가 건드리지 않고, force=True일 때만 덮어씁니다."""
     parsed_trip = ParsedTrip(**PARSED[0])
     asyncio.run(
-        st.save_user_timetable(
+        sto.save_user_timetable(
             "사용자수정", [parsed_trip], "직접 제목", updated_by="sub-1"
         )
     )
-    store = st.load_store()
+    store = sto.load_store()
     assert store["사용자수정"]["source"] == "user"
     # PUT 본문 title이 버려지던 버그(F7) 회귀 방지
     assert store["사용자수정"]["title"] == "직접 제목"
     assert store["사용자수정"]["updated_by"] == "sub-1"
 
     with (
-        patch.object(st, "fetch_shuttle_pdf", _fetch(place="사용자수정")),
-        patch.object(st, "parse_shuttle_pdf", return_value=("제목", PARSED)) as p,
+        patch.object(syn, "fetch_shuttle_pdf", _fetch(place="사용자수정")),
+        patch.object(syn, "parse_shuttle_pdf", return_value=PARSE_RESULT) as p,
     ):
-        assert asyncio.run(st.ingest_shuttle_pdf()) is None
+        assert asyncio.run(syn.ingest_shuttle_pdf()) is None
         assert p.call_count == 0
-        doc = asyncio.run(st.ingest_shuttle_pdf(force=True))
+        doc = asyncio.run(syn.ingest_shuttle_pdf(force=True))
         assert doc is not None and doc["source"] == "pdf" and p.call_count == 1
 
-    assert asyncio.run(st.delete_timetable("사용자수정")) is True
-    assert "사용자수정" not in st.load_store()
-    assert asyncio.run(st.delete_timetable("사용자수정")) is False
+    assert asyncio.run(sto.delete_timetable("사용자수정")) is True
+    assert "사용자수정" not in sto.load_store()
+    assert asyncio.run(sto.delete_timetable("사용자수정")) is False
 
 
 def check_sync():
     """sync는 갱신된 place를 돌려주고, 예외는 삼켜서 빈 목록을 돌려줍니다."""
-    with patch.object(st, "ingest_shuttle_pdf", AsyncMock(return_value={"place": "A"})):
-        assert asyncio.run(st.sync_shuttle_timetables()) == ["A"]
-    with patch.object(st, "ingest_shuttle_pdf", AsyncMock(return_value=None)):
-        assert asyncio.run(st.sync_shuttle_timetables()) == []
     with patch.object(
-        st, "ingest_shuttle_pdf", AsyncMock(side_effect=RuntimeError("boom"))
+        syn, "ingest_shuttle_pdf", AsyncMock(return_value={"place": "A"})
     ):
-        assert asyncio.run(st.sync_shuttle_timetables()) == []
+        assert asyncio.run(syn.sync_shuttle_timetables()) == ["A"]
+    with patch.object(syn, "ingest_shuttle_pdf", AsyncMock(return_value=None)):
+        assert asyncio.run(syn.sync_shuttle_timetables()) == []
+    with patch.object(
+        syn, "ingest_shuttle_pdf", AsyncMock(side_effect=RuntimeError("boom"))
+    ):
+        assert asyncio.run(syn.sync_shuttle_timetables()) == []
 
 
 def check_fetch_pdf():
@@ -184,85 +189,101 @@ def check_fetch_pdf():
 
     with (
         patch(
-            "app.utils.shuttle_timetable.BookDownloader.fetch_file_list", fake_file_list
+            "app.services.shuttle_sync.BookDownloader.fetch_file_list", fake_file_list
         ),
         patch(
-            "app.utils.shuttle_timetable.BookDownloader.get_file_url",
+            "app.services.shuttle_sync.BookDownloader.get_file_url",
             lambda self, _: "https://x/a.pdf",
         ),
         patch("httpx.AsyncClient.get", AsyncMock(return_value=_Resp())),
     ):
-        place, url, content = asyncio.run(st.fetch_shuttle_pdf())
+        place, url, content = asyncio.run(syn.fetch_shuttle_pdf())
     assert place == "26년 셔틀버스 시간표 (2학기)"
     assert url == "https://x/a.pdf" and content == PDF_BYTES
 
 
-def check_date_filter_and_dedupe():
-    """query_trips의 날짜 필터 + (기간·방향·운행일·시각) 기준 dedupe."""
+def check_build_timetable():
+    """날짜 필터·운행일 매핑·연도 계산·문서 선택·version."""
     always = trip("본교 → 정왕역", "평일", "07:00")  # 기간 표기 없음 → 상시
-    summer_normal = trip(
-        "본교 → 정왕역",
-        "평일",
-        "08:00",
-        valid_from="08-25",
-        valid_to="08-31",
-        period_note="정상근무",
+    fall = trip("본교 → 정왕역", "평일", "08:00", valid_from="09-01", valid_to="12-22")
+    weekend = trip(
+        "정왕역 → 본교", "주말", "09:00", valid_from="09-01", valid_to="12-22"
     )
-    summer_short = trip(
-        "본교 → 정왕역",
-        "평일",
-        "08:00",
-        valid_from="07-01",
-        valid_to="07-13",
-        period_note="단축근무",
+    holiday = trip(
+        "정왕역 → 본교", "공휴일", "10:00", valid_from="09-01", valid_to="12-22"
     )
-    winter_break = trip(
-        "본교 → 정왕역",
-        "평일",
-        "23:00",
-        valid_from="12-20",
-        valid_to="02-28",
-        period_note="겨울방학",
+    winter = trip(
+        "본교 → 정왕역", "평일", "23:00", valid_from="12-20", valid_to="02-28"
     )
-    summer_normal_dup = summer_normal.model_copy(
-        update={"period_note": "정상근무(통합)"}
-    )
-
-    store = {
-        "개별표": {
-            "trips": [t.model_dump() for t in [always, summer_normal, winter_break]]
-        },
-        "통합표": {
-            "trips": [t.model_dump() for t in [summer_normal_dup, summer_short]]
-        },
+    doc = {
+        "place": "2학기",
+        "source": "pdf",
+        "trips": [t.model_dump() for t in [always, fall, fall, weekend, holiday]],
     }
 
-    in_range = st.query_trips(store, on_date=date(2026, 8, 27))
-    times = {t["departure_time"] for t in in_range}
-    assert "08:00" in times and "07:00" in times
-    assert "23:00" not in times
+    def seg(res, dir_id):
+        return [
+            d["segments"]
+            for r in res["routes"]
+            for d in r["directions"]
+            if d["id"] == dir_id
+        ][0]
 
-    matches = [t for t in in_range if t["departure_time"] == "08:00"]
-    assert len(matches) == 1
-    assert matches[0]["place"] == "개별표"
-    assert matches[0]["period_note"] == "정상근무"
+    thu = sch.build_timetable(doc, date(2026, 10, 22))
+    assert thu["day_type"] == "weekday" and thu["holiday_name"] is None
+    assert (thu["valid_from"], thu["valid_to"]) == ("2026-09-01", "2026-12-22")
+    assert [d["id"] for r in thu["routes"] for d in r["directions"]] == [
+        "main_out", "main_in", "campus2_out",
+        "campus2_in", "campus2_from_station", "campus2_to_station",
+    ]  # fmt: skip
+    # 중복 제거 + 오름차순 + 운행 없는 방향도 빈 목록
+    assert seg(thu, "main_out") == [
+        {"type": "fixed", "time": "07:00", "note": None},
+        {"type": "fixed", "time": "08:00", "note": None},
+    ]
+    assert seg(thu, "main_in") == [] and seg(thu, "campus2_to_station") == []
 
-    short_range = st.query_trips(store, on_date=date(2026, 7, 5))
-    assert any(
-        t["departure_time"] == "08:00" and t["period_note"] == "단축근무"
-        for t in short_range
-    )
-    assert not any(t["period_note"] == "정상근무" for t in short_range)
+    sat = sch.build_timetable(doc, date(2026, 10, 24))  # '주말' 표는 토·일 양쪽
+    assert sat["day_type"] == "saturday" and seg(sat, "main_in")[0]["time"] == "09:00"
+    sun = sch.build_timetable(doc, date(2026, 10, 25))
+    assert sun["day_type"] == "sunday" and seg(sun, "main_in")[0]["time"] == "09:00"
+    hol = sch.build_timetable(doc, date(2026, 10, 9))  # 한글날(금)
+    assert (hol["day_type"], hol["holiday_name"]) == ("holiday", "한글날")
+    assert [g["time"] for g in seg(hol, "main_in")] == ["10:00"]
+    assert seg(hol, "main_out") == []
 
-    out_of_range = st.query_trips(store, on_date=date(2026, 9, 10))
-    assert {t["departure_time"] for t in out_of_range} == {"07:00"}
+    # 기간 밖이면 비지만 기간 표기는 그대로(연도는 조회일 기준)
+    # 기간 밖이면 상시 trip까지 비고, 기간은 가장 최근에 끝난 실제 기간(다음 해 아님)
+    jan = sch.build_timetable(doc, date(2027, 1, 5))
+    assert seg(jan, "main_out") == []
+    assert (jan["valid_from"], jan["valid_to"]) == ("2026-09-01", "2026-12-22")
 
-    jan = st.query_trips(store, on_date=date(2026, 1, 15))
-    assert "23:00" in {t["departure_time"] for t in jan}
+    # 연말 걸침: 1월이면 전년도 12월부터, 12월이면 다음 해 2월까지
+    wdoc = {"place": "겨울", "source": "pdf", "trips": [winter.model_dump()]}
+    w1 = sch.build_timetable(wdoc, date(2027, 1, 15))
+    assert (w1["valid_from"], w1["valid_to"]) == ("2026-12-20", "2027-02-28")
+    w2 = sch.build_timetable(wdoc, date(2026, 12, 21))
+    assert (w2["valid_from"], w2["valid_to"]) == ("2026-12-20", "2027-02-28")
+    assert seg(w2, "main_out")[0]["time"] == "23:00"
 
-    all_trips = st.query_trips(store, include_all=True)
-    assert {t["departure_time"] for t in all_trips} == {"07:00", "08:00", "23:00"}
-    assert len(all_trips) == 4
+    # version: 날짜와 무관, 내용·needs_review가 바뀌면 바뀜
+    assert thu["version"] == sat["version"] == jan["version"]
+    assert len(thu["version"]) == 16
+    reviewing = sch.build_timetable(doc, date(2026, 10, 22), needs_review=True)
+    assert reviewing["version"] != thu["version"]
+    changed = {**doc, "notes": ["새 안내"]}
+    assert sch.build_timetable(changed, date(2026, 10, 22))["version"] != thu["version"]
+
+    # 문서 선택: 조회일에 운행하는 문서, 그중 사용자 수정본 우선
+    old = {"place": "1학기", "source": "pdf", "parsed_at": "2026-03-01", "trips": [
+        trip("본교 → 정왕역", "평일", "06:00", valid_from="03-02", valid_to="06-20")
+        .model_dump()
+    ]}  # fmt: skip
+    store = {"1학기": old, "2학기": {**doc, "parsed_at": "2026-09-01"}}
+    assert sch.pick_document(store, date(2026, 10, 22))["place"] == "2학기"
+    assert sch.pick_document(store, date(2026, 4, 1))["place"] == "1학기"
+    store["직접"] = {**doc, "place": "직접", "source": "user"}
+    assert sch.pick_document(store, date(2026, 10, 22))["place"] == "직접"
 
 
 def run():
@@ -272,35 +293,36 @@ def run():
     check_hash_guard()
     check_user_override()
     check_sync()
-    check_date_filter_and_dedupe()
+    check_build_timetable()
 
     # 저장 → 조회 전 구간
     with (
-        patch.object(st, "fetch_shuttle_pdf", _fetch()),
-        patch.object(
-            st, "parse_shuttle_pdf", return_value=("2학기 셔틀버스 시간표", PARSED)
-        ),
+        patch.object(syn, "fetch_shuttle_pdf", _fetch()),
+        patch.object(syn, "parse_shuttle_pdf", return_value=("2학기", PARSED, [], [])),
     ):
-        doc = asyncio.run(st.ingest_shuttle_pdf())
+        doc = asyncio.run(syn.ingest_shuttle_pdf())
     assert len(doc["trips"]) == 2
-    assert os.path.exists(st.Config.SHUTTLE_TIMETABLE_PATH)
-    assert any(f.endswith(".pdf") for f in os.listdir(st.Config.SHUTTLE_PDF_DIR))
+    assert os.path.exists(syn.Config.SHUTTLE_TIMETABLE_PATH)
+    assert any(f.endswith(".pdf") for f in os.listdir(syn.Config.SHUTTLE_PDF_DIR))
 
-    store = st.load_store()
-    assert len(st.query_trips(store, day_type="평일", on_date=date(2026, 9, 10))) == 1
-    # 기간(09-01~12-22) 밖 날짜면 빠진다
-    assert st.query_trips(store, on_date=date(2026, 1, 5)) == []
+    store = sto.load_store()
+    day = date(2026, 9, 10)
+    res = sch.build_timetable(sch.pick_document(store, day), day)
+    main_in = res["routes"][0]["directions"][1]
+    assert main_in["segments"] == [
+        {"type": "frequent", "start": "08:40", "end": "10:00", "note": "수시운행"}
+    ]
 
     print("OK")
 
 
 def test_pipeline(tmp_path, monkeypatch):
     """pytest 진입점. 다른 테스트가 Config를 먼저 import해도 임시 경로를 쓰게 고정합니다."""
-    monkeypatch.setattr(st.Config, "DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(syn.Config, "DATA_DIR", str(tmp_path))
     monkeypatch.setattr(
-        st.Config, "SHUTTLE_TIMETABLE_PATH", str(tmp_path / "shuttle_timetable.json")
+        syn.Config, "SHUTTLE_TIMETABLE_PATH", str(tmp_path / "shuttle_timetable.json")
     )
-    monkeypatch.setattr(st.Config, "SHUTTLE_PDF_DIR", str(tmp_path / "shuttle_pdf"))
+    monkeypatch.setattr(syn.Config, "SHUTTLE_PDF_DIR", str(tmp_path / "shuttle_pdf"))
     run()
 
 

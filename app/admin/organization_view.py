@@ -6,7 +6,14 @@ from sqladmin import BaseView, expose
 from starlette.requests import Request
 from starlette.responses import Response
 
-from app.admin.auth import admin_sub, csrf_token, log_admin_action, verify_csrf
+from app.admin.auth import (
+    FullAdminOnly,
+    admin_sub,
+    csrf_token,
+    log_admin_action,
+    require_full_admin,
+    verify_csrf,
+)
 from app.config import Config, logger
 from app.utils.university_structure import (
     parse_school_info,
@@ -15,7 +22,7 @@ from app.utils.university_structure import (
 )
 
 
-class OrganizationAdminView(BaseView):
+class OrganizationAdminView(FullAdminOnly, BaseView):
     """조직도 트리 미리보기와 JSON 편집."""
 
     name = "조직도"
@@ -70,6 +77,7 @@ class OrganizationAdminView(BaseView):
     @expose("/organization", methods=["GET"], identity="organization")
     async def page(self, request: Request) -> Response:
         """현재 조직도 보기."""
+        require_full_admin(request)
         return await self._render(request)
 
     @expose(
@@ -77,6 +85,7 @@ class OrganizationAdminView(BaseView):
     )
     async def validate(self, request: Request) -> Response:
         """저장하지 않고 검증만 합니다."""
+        require_full_admin(request)
         form = await request.form()
         if not verify_csrf(request, str(form.get("csrf_token") or "")):
             return Response("CSRF 검증 실패", status_code=Config.HttpStatus.FORBIDDEN)
@@ -92,6 +101,7 @@ class OrganizationAdminView(BaseView):
     @expose("/organization/save", methods=["POST"], identity="organization_save")
     async def save(self, request: Request) -> Response:
         """검증 후 원자적으로 저장합니다."""
+        require_full_admin(request)
         form = await request.form()
         if not verify_csrf(request, str(form.get("csrf_token") or "")):
             return Response("CSRF 검증 실패", status_code=Config.HttpStatus.FORBIDDEN)
