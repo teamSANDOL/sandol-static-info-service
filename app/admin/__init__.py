@@ -9,9 +9,17 @@ import importlib
 import os
 
 from fastapi import FastAPI
+from jinja2 import ChoiceLoader, PackageLoader, PrefixLoader
 from sqladmin import Admin
+from starlette.middleware import Middleware
 
-from app.admin.auth import KeycloakAdminAuth, admin_configured, router
+from app.admin.auth import (
+    AdminCSRFMiddleware,
+    KeycloakAdminAuth,
+    admin_configured,
+    csrf_token,
+    router,
+)
 from app.config import Config, logger
 from app.database import engine
 
@@ -62,7 +70,17 @@ def mount_admin(app: FastAPI) -> Admin | None:
         authentication_backend=KeycloakAdminAuth(),
         title="산돌이 static-info 관리자",
         templates_dir=TEMPLATES_DIR,
+        middlewares=[Middleware(AdminCSRFMiddleware)],
     )
+    # templates/sqladmin/base.html 이 원본을 확장해 CSRF 토큰을 모든 화면에 넣는다.
+    env = admin.templates.env
+    env.loader = ChoiceLoader(
+        [
+            *filter(None, [env.loader]),
+            PrefixLoader({"sqladmin_pkg": PackageLoader("sqladmin", "templates")}),
+        ]
+    )
+    env.globals["admin_csrf_token"] = csrf_token
     for view in _load_views():
         admin.add_view(view)
     logger.info("관리자 화면 마운트: %s/admin", Config.ROOT_PATH)

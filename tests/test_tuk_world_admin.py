@@ -2,6 +2,7 @@
 
 import io
 import os
+import re
 from collections.abc import Iterator
 
 import pytest
@@ -10,6 +11,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from PIL import Image
 from sqlalchemy import select
+from starlette.requests import Request
 
 from app.admin import auth as admin_auth
 from app.admin import mount_admin, tuk_world_view
@@ -56,8 +58,21 @@ def _png() -> bytes:
     return buf.getvalue()
 
 
+def _csrf(client: TestClient) -> str:
+    html = client.get(f"{P}/restaurant/list").text
+    match = re.search(r'<meta name="csrf-token" content="([0-9a-f]+)">', html)
+    assert match
+    return match.group(1)
+
+
+def _hdr(client: TestClient) -> dict[str, str]:
+    return {"X-CSRF-Token": _csrf(client)}
+
+
 def _create(client: TestClient, **over: str) -> int:
-    res = client.post(f"{P}/restaurant/create", data={**FORM, **over})
+    res = client.post(
+        f"{P}/restaurant/create", data={**FORM, **over, "csrf_token": _csrf(client)}
+    )
     assert res.status_code == 302, res.text
     with SessionLocal() as db:
         rid = db.scalars(select(Restaurant.id).order_by(Restaurant.id.desc())).first()
@@ -72,11 +87,15 @@ def test_crud_and_search(client: TestClient) -> None:
         assert r is not None
         assert (r.latitude, r.discount_info) == (37.34, "10% 할인\n두 줄")
         assert r.kakao_map_url is None
-    res = client.post(f"{P}/restaurant/edit/{rid}", data={**FORM, "name": "새이름"})
+    res = client.post(
+        f"{P}/restaurant/edit/{rid}",
+        data={**FORM, "name": "새이름", "csrf_token": _csrf(client)},
+    )
     assert res.status_code == 302
     assert "새이름" in client.get(f"{P}/restaurant/list?search=새이").text
     assert "새이름" not in client.get(f"{P}/restaurant/list?search=zzz").text
-    assert client.delete(f"{P}/restaurant/delete?pks={rid}").status_code == 200
+    res = client.delete(f"{P}/restaurant/delete?pks={rid}", headers=_hdr(client))
+    assert res.status_code == 200
     with SessionLocal() as db:
         assert db.get(Restaurant, rid) is None
 
@@ -92,14 +111,16 @@ def test_crud_and_search(client: TestClient) -> None:
     ],
 )
 def test_invalid_input_rejected(client: TestClient, over: dict[str, str]) -> None:
-    res = client.post(f"{P}/restaurant/create", data={**FORM, **over})
+    res = client.post(
+        f"{P}/restaurant/create", data={**FORM, **over, "csrf_token": _csrf(client)}
+    )
     assert res.status_code == 400
 
 
 def _upload(client: TestClient, rid: int, data: bytes, name: str, mime: str):
     return client.post(
         f"{P}/restaurant-image/create",
-        data={"restaurant": str(rid)},
+        data={"restaurant": str(rid), "csrf_token": _csrf(client)},
         files={"file": (name, data, mime)},
     )
 
@@ -119,9 +140,13 @@ def test_image_upload_delete_and_restaurant_delete(client: TestClient) -> None:
             for p in paths
         )
     assert str(first) in client.get(f"{P}/restaurant/details/{rid}").text
-    assert client.delete(f"{P}/restaurant-image/delete?pks={first}").status_code == 200
+    res = client.delete(
+        f"{P}/restaurant-image/delete?pks={first}", headers=_hdr(client)
+    )
+    assert res.status_code == 200
     assert not os.path.exists(paths[0]) and os.path.exists(paths[1])
-    assert client.delete(f"{P}/restaurant/delete?pks={rid}").status_code == 200
+    res = client.delete(f"{P}/restaurant/delete?pks={rid}", headers=_hdr(client))
+    assert res.status_code == 200
     assert not os.path.exists(paths[1])
     with SessionLocal() as db:
         assert db.get(RestaurantImage, second) is None
@@ -210,3 +235,50 @@ def test_image_file_removed_when_commit_fails(
     assert res.status_code == 400  # sqladmin이 예외를 폼 오류로 바꾼다.
     assert len(saved) == 1  # 파일은 실제로 저장됐다가
     assert os.listdir(Config.TUK_WORLD_IMAGE_DIR) == before  # 지워졌다.
+
+
+def _count() -> int:
+    with SessionLocal() as db:
+        return len(db.scalars(select(Restaurant)).all())
+
+
+def test_page_carries_session_csrf_token(client: TestClient) -> None:
+    html = client.get(f"{P}/restaurant/create").text
+    assert 'name="csrf-token"' in html and "X-CSRF-Token" in html
+    no_cookie = Request({"type": "http", "headers": []})
+    assert _csrf(client) == admin_auth.csrf_token(no_cookie)
+
+
+@pytest.mark.parametrize("token", [None, "0" * 64], ids=["missing", "wrong"])
+def test_default_view_writes_require_csrf(
+    client: TestClient, token: str | None
+) -> None:
+    rid = _create(client)
+    before = _count()
+    form = {**FORM, "name": "위조"} | ({"csrf_token": token} if token else {})
+    headers = {"X-CSRF-Token": token} if token else {}
+    assert client.post(f"{P}/restaurant/create", data=form).status_code == 403
+    assert client.post(f"{P}/restaurant/edit/{rid}", data=form).status_code == 403
+    res = client.delete(f"{P}/restaurant/delete?pks={rid}", headers=headers)
+    assert res.status_code == 403
+    res = client.post(
+        f"{P}/restaurant-image/create",
+        data={"restaurant": str(rid)} | ({"csrf_token": token} if token else {}),
+        files={"file": ("a.png", _png(), "image/png")},
+    )
+    assert res.status_code == 403
+    assert _count() == before
+    with SessionLocal() as db:
+        r = db.get(Restaurant, rid)
+        assert r is not None and r.name == FORM["name"]
+        assert db.scalars(select(RestaurantImage)).first() is None
+
+
+def test_write_without_session_rejected_before_body(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    token = _csrf(client)
+    monkeypatch.setattr(admin_auth, "admin_sub", lambda r: None)
+    res = client.post(f"{P}/restaurant/create", data={**FORM, "csrf_token": token})
+    assert res.status_code == 403
+    assert _count() == 0

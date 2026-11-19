@@ -28,6 +28,14 @@ from app.config.config import logger
 from app.config.shuttle_routes import SHUTTLE_DIRECTIONS
 
 LINE_EPS = 1.5  # 이보다 x(또는 y) 차가 작은 선을 세로(가로) 괘선으로 봅니다.
+MONTH_MAX = 12  # 운행 기간의 월 상한
+DAY_MAX = 31  # 운행 기간의 일 상한
+HOUR_MAX = 23  # 시각의 시 상한
+MINUTE_MAX = 59  # 시각의 분 상한
+MIN_DIRECTION_PLACES = 2  # 방향 'A → B'를 이루는 최소 장소 수
+MIN_PAIR_ENDS = 2  # 'A ↔ B' 그룹 머리글의 최소 양 끝 장소 수
+DEP_HEADER_ROW_EPS = 6  # '출발' 머리글과 같은 줄로 보는 top 차 상한
+PAIR_ROW_EPS = 6  # 'A ↔ B' 그룹 머리글 줄로 보는 top 차 상한
 TIME = re.compile(r"(\d{1,2}):(\d{2})")
 VALID_TIME = re.compile(r"(?<!\d)([01]?\d|2[0-3]):([0-5]\d)(?!\d)")
 INT = re.compile(r"^\d{1,2}$")
@@ -74,7 +82,11 @@ def _vlines(page):
         중복 없이 오름차순으로 모은 리스트.
     """
     return sorted(
-        {round(l["x0"], 1) for l in page.lines if abs(l["x0"] - l["x1"]) < 1.5}
+        {
+            round(line["x0"], 1)
+            for line in page.lines
+            if abs(line["x0"] - line["x1"]) < LINE_EPS
+        }
     )
 
 
@@ -89,7 +101,11 @@ def _hlines(page):
         중복 없이 오름차순으로 모은 리스트.
     """
     return sorted(
-        {round(l["top"], 1) for l in page.lines if abs(l["top"] - l["bottom"]) < 1.5}
+        {
+            round(line["top"], 1)
+            for line in page.lines
+            if abs(line["top"] - line["bottom"]) < LINE_EPS
+        }
     )
 
 
@@ -191,7 +207,12 @@ def _period(text):
     if not m:
         return None, None
     a, b, c, d = (int(x) for x in m.groups())
-    if not (1 <= a <= 12 and 1 <= c <= 12 and 1 <= b <= 31 and 1 <= d <= 31):
+    if not (
+        1 <= a <= MONTH_MAX
+        and 1 <= c <= MONTH_MAX
+        and 1 <= b <= DAY_MAX
+        and 1 <= d <= DAY_MAX
+    ):
         return None, None
     return f"{a:02d}-{b:02d}", f"{c:02d}-{d:02d}"
 
@@ -221,9 +242,9 @@ def _canon_direction(text):
             seq.append(name)
     # 정왕역↔제2캠퍼스 직행은 없습니다. 문서에 '정왕역 ↔ 제2캠퍼스'로만 적혀 있어도
     # 실제로는 본교 운동장 옆(서문) 정류장을 경유하므로 경유지를 채워 넣습니다.
-    if seq == ["정왕역", "제2캠퍼스"] or seq == ["제2캠퍼스", "정왕역"]:
+    if seq in (["정왕역", "제2캠퍼스"], ["제2캠퍼스", "정왕역"]):
         seq.insert(1, "본교")
-    return " → ".join(seq) if len(seq) >= 2 else None
+    return " → ".join(seq) if len(seq) >= MIN_DIRECTION_PLACES else None
 
 
 def _trip(direction, day_type, departure_time, end=None, note=None):
@@ -297,7 +318,7 @@ def _grid_bottom(page, words, top0):
     return min(cam, default=page.height)
 
 
-def _parse_grid(page, words, day_type, out):
+def _parse_grid(page, words, day_type, out):  # noqa: C901 - 표 좌표 파서, 분리 시 회귀 위험
     """(A) 시-분 격자표를 읽어 운행편을 `out`에 추가합니다.
 
     시 열 좌측은 하교(`DIR_OUT`), 우측은 등교(`DIR_IN`)로 가릅니다.
@@ -319,7 +340,7 @@ def _parse_grid(page, words, day_type, out):
     cur_hour = None
     side_text = ["", ""]
     lasts: list[dict | None] = [None, None]
-    for a, b in zip(hs, hs[1:]):
+    for a, b in pairwise(hs):
         row = [w for w in words if a - 1 <= w["top"] < b - 1]
         if not row:
             continue
@@ -366,7 +387,7 @@ def _parse_grid(page, words, day_type, out):
                 )
                 out.append(lasts[side])
             for w in cells:
-                if INT.match(w["text"]) and int(w["text"]) <= 59:
+                if INT.match(w["text"]) and int(w["text"]) <= MINUTE_MAX:
                     out.append(_trip(direction, day_type, _hhmm(cur_hour, w["text"])))
     _arrival_board(side_text[0], lasts[0], DIR_OUT, day_type, out)
     _arrival_board(side_text[1], lasts[1], DIR_IN, day_type, out)
@@ -415,6 +436,54 @@ def _cam_direction(header):
     return _canon_direction(header) or (header or "").strip()
 
 
+def _departure_cols(words, dep, hdr_top):
+    """'<장소> 출발' 열 머리글의 (x0, x1, 장소명) 목록.
+
+    Args:
+        words: 페이지의 pdfplumber 단어 dict 목록.
+        dep: '출발' 단어 목록.
+        hdr_top: '출발' 단어 중 가장 위의 top.
+
+    Returns:
+        [x0, x1, 장소명] 리스트의 리스트(장소를 못 찾은 열은 제외).
+    """
+    row = _row(words, hdr_top)
+    cols = []
+    for w in dep:
+        if abs(w["top"] - hdr_top) >= DEP_HEADER_ROW_EPS:
+            continue
+        left = [x for x in row if x["x1"] <= w["x0"] + 1]
+        if not left:
+            continue
+        place = max(left, key=lambda x: x["x1"])
+        cols.append([place["x0"], w["x1"], place["text"].strip()])
+    return cols
+
+
+def _pair_ranges(words, hdr_top):
+    """'A ↔ B' 그룹 머리글의 (x0, x1, 양 끝 장소) 목록.
+
+    Args:
+        words: 페이지의 pdfplumber 단어 dict 목록.
+        hdr_top: '출발' 머리글 줄의 top.
+
+    Returns:
+        (좌측 x, 우측 x, 장소 리스트) 튜플 리스트. 그룹 머리글이 없으면 빈 리스트.
+    """
+    pair_rows = sorted(
+        {w["top"] for w in words if "↔" in w["text"] and w["top"] < hdr_top - 3}
+    )
+    pairs = []
+    if pair_rows:
+        pr = [w for w in words if abs(w["top"] - pair_rows[-1]) < PAIR_ROW_EPS]
+        for g in _groups(pr, gap=20):
+            txt = "".join(x["text"] for x in g)
+            ends = [e.strip() for e in txt.split("↔") if e.strip()]
+            if len(ends) >= MIN_PAIR_ENDS:
+                pairs.append((g[0]["x0"] - 6, g[-1]["x1"] + 6, ends))
+    return pairs
+
+
 def _parse_departure_cols(page, words, out, day):
     """(C) '<장소> 출발' 열 머리글 + 'A ↔ B' 그룹 머리글.
 
@@ -428,36 +497,16 @@ def _parse_departure_cols(page, words, out, day):
     if not dep:
         return
     hdr_top = min(w["top"] for w in dep)
-    row = _row(words, hdr_top)
-    cols = []
-    for w in dep:
-        if abs(w["top"] - hdr_top) >= 6:
-            continue
-        left = [x for x in row if x["x1"] <= w["x0"] + 1]
-        if not left:
-            continue
-        place = max(left, key=lambda x: x["x1"])
-        cols.append([place["x0"], w["x1"], place["text"].strip()])
+    cols = _departure_cols(words, dep, hdr_top)
     if not cols:
         return
-
-    pair_rows = sorted(
-        {w["top"] for w in words if "↔" in w["text"] and w["top"] < hdr_top - 3}
-    )
-    pairs = []
-    if pair_rows:
-        pr = [w for w in words if abs(w["top"] - pair_rows[-1]) < 6]
-        for g in _groups(pr, gap=20):
-            txt = "".join(x["text"] for x in g)
-            ends = [e.strip() for e in txt.split("↔") if e.strip()]
-            if len(ends) >= 2:
-                pairs.append((g[0]["x0"] - 6, g[-1]["x1"] + 6, ends))
+    pairs = _pair_ranges(words, hdr_top)
 
     for w in words:
         if w["top"] <= hdr_top:
             continue
         for hh, mm in TIME.findall(w["text"]):
-            if int(hh) > 23 or int(mm) > 59:
+            if int(hh) > HOUR_MAX or int(mm) > MINUTE_MAX:
                 continue
             col = min(cols, key=lambda c: abs(_cx(w) - (c[0] + c[1]) / 2))
             origin, dest = col[2], None
@@ -517,9 +566,10 @@ def _parse_cam(page, words, out, grid_bottom, page_day):
 
     vs = sorted(
         {
-            round(l["x0"], 1)
-            for l in page.lines
-            if abs(l["x0"] - l["x1"]) < 1.5 and max(l["top"], l["bottom"]) > top
+            round(line["x0"], 1)
+            for line in page.lines
+            if abs(line["x0"] - line["x1"]) < LINE_EPS
+            and max(line["top"], line["bottom"]) > top
         }
     )
     bounds = [0.0] + vs + [float(page.width)]
