@@ -21,7 +21,8 @@ from fastapi.security import HTTPAuthorizationCredentials
 from sqladmin.authentication import AuthenticationBackend
 from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
-from starlette.responses import RedirectResponse, Response
+from starlette.responses import PlainTextResponse, RedirectResponse, Response
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.config import Config, logger
 from app.utils.audit import arecord_audit
@@ -220,6 +221,73 @@ def verify_csrf(request: Request, token: str | None) -> bool:
     if not token or admin_sub(request) is None:
         return False
     return hmac.compare_digest(token, csrf_token(request))
+
+
+CSRF_HEADER = "x-csrf-token"
+_SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+
+
+class AdminCSRFMiddleware:
+    """관리자 앱(/admin)의 상태 변경 요청을 한 곳에서 CSRF 검증합니다.
+
+    토큰은 X-CSRF-Token 헤더(sqladmin 삭제의 jQuery DELETE) 또는 폼 필드
+    csrf_token(생성·수정·업로드 폼, 커스텀 뷰 폼)으로 받는다. 세션이 없으면 본문을
+    읽기 전에 403을 돌려준다. 폼을 읽은 경우 본문을 그대로 다시 흘려보낸다.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        """감쌀 ASGI 앱을 받습니다."""
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        """안전한 메서드는 통과시키고 나머지는 토큰을 확인합니다."""
+        if scope["type"] != "http" or scope["method"] in _SAFE_METHODS:
+            await self.app(scope, receive, send)
+            return
+        request = Request(scope)
+        if admin_sub(request) is None:
+            await self._reject(scope, receive, send)
+            return
+        token = request.headers.get(CSRF_HEADER)
+        if token is None:
+            body = await _read_body(receive)
+            form = await Request(scope, _replay(body, receive)).form()
+            field = form.get("csrf_token")
+            token = field if isinstance(field, str) else None
+            await form.close()
+            receive = _replay(body, receive)
+        if not verify_csrf(request, token):
+            await self._reject(scope, receive, send)
+            return
+        await self.app(scope, receive, send)
+
+    @staticmethod
+    async def _reject(scope: Scope, receive: Receive, send: Send) -> None:
+        """403 응답을 보냅니다."""
+        response = PlainTextResponse(
+            "CSRF 검증 실패", status_code=Config.HttpStatus.FORBIDDEN
+        )
+        await response(scope, receive, send)
+
+
+async def _read_body(receive: Receive) -> list[Message]:
+    """요청 본문 메시지를 끝까지 모읍니다."""
+    messages: list[Message] = []
+    while True:
+        message = await receive()
+        messages.append(message)
+        if message["type"] != "http.request" or not message.get("more_body"):
+            return messages
+
+
+def _replay(messages: list[Message], receive: Receive) -> Receive:
+    """모아 둔 본문을 다시 내보내고, 다 내보낸 뒤에는 원래 receive로 넘깁니다."""
+    pending = list(messages)
+
+    async def replay() -> Message:
+        return pending.pop(0) if pending else await receive()
+
+    return replay
 
 
 async def log_admin_action(request: Request, action: str, target: str) -> None:
