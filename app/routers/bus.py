@@ -42,7 +42,7 @@ async def get_shuttle_timetable(
 
     응답에 `ETag: "<version>"`와 `Cache-Control: public, max-age=300`을 붙이고,
     `If-None-Match`가 현재 태그와 같으면 본문 없이 304를 돌려줍니다. date를 생략하면
-    태그는 `"<version>-<YYYYMMDD(KST)>"`입니다.
+    태그는 항상 `"<version>-<조회일 YYYYMMDD>"`입니다(date 생략 시 오늘, KST).
 
 
 

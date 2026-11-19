@@ -22,8 +22,8 @@ _background: set[asyncio.Task[list[str]]] = set()  # create_task 결과가 GC되
 def public_timetable(date: datetime.date | None) -> tuple[dict, str]:
     """조회일 하루치 공개 시간표와 그 ETag 태그를 만듭니다.
 
-    version은 날짜와 무관하므로 date 없이(=오늘) 부르면 날짜를 태그에 섞어야 다음 날
-    재검증에서 어제 본문이 304로 남지 않습니다. 앱은 date를 항상 보냅니다.
+    version은 날짜와 무관하므로(공휴일 표 포함) 태그에는 조회일을 항상 섞습니다.
+    그래야 다른 날짜의 ETag로 재검증해도 304로 엉뚱한 본문이 남지 않습니다.
 
     Args:
         date: 조회일. None이면 오늘(KST).
@@ -43,7 +43,7 @@ def public_timetable(date: datetime.date | None) -> tuple[dict, str]:
     query_date = date or datetime.datetime.now(KST).date()
     doc = pick_document(store, query_date)
     body = build_timetable(doc, query_date, needs_review=needs_review(doc))
-    tag = body["version"] if date else f"{body['version']}-{query_date:%Y%m%d}"
+    tag = f"{body['version']}-{query_date:%Y%m%d}"
     return body, tag
 
 

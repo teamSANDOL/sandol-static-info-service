@@ -9,6 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.config import Config
+from app.services import holidays
 from app.services import shuttle as shuttle_service
 from app.services import shuttle_schedule as sch
 from app.services import shuttle_store as sto
@@ -130,6 +131,46 @@ def test_version_tracks_holiday_file(
     assert after["version"] != before["version"]
 
 
+def test_etag_differs_by_date_and_matches_same_date(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """한 날짜의 ETag로 다른 날짜를 재검증하면 304가 아니라 200이어야 합니다."""
+    _ingest(monkeypatch)
+    thu = api.get("/bus/timetable", params={"date": "2026-10-22"})
+    fri = api.get("/bus/timetable", params={"date": "2026-10-23"})
+    assert thu.headers["etag"] != fri.headers["etag"]
+    cross = api.get(
+        "/bus/timetable",
+        params={"date": "2026-10-23"},
+        headers={"If-None-Match": thu.headers["etag"]},
+    )
+    assert cross.status_code == 200 and cross.json()["date"] == "2026-10-23"
+    same = api.get(
+        "/bus/timetable",
+        params={"date": "2026-10-22"},
+        headers={"If-None-Match": thu.headers["etag"]},
+    )
+    assert same.status_code == 304
+
+
+def test_etag_changes_when_holiday_cache_changes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """공휴일 캐시가 갱신돼 그날 판정이 바뀌면 같은 날짜라도 ETag가 바뀝니다."""
+    _ingest(monkeypatch)
+    monkeypatch.setattr(holidays, "_memory", {})
+    monkeypatch.setattr(holidays, "_state", {"loaded": True})
+    before = api.get("/bus/timetable", params={"date": "2026-10-22"})
+    holidays._memory[2026] = {"2026-10-22": "임시공휴일"}
+    after = api.get(
+        "/bus/timetable",
+        params={"date": "2026-10-22"},
+        headers={"If-None-Match": before.headers["etag"]},
+    )
+    assert after.status_code == 200 and after.json()["day_type"] == "holiday"
+    assert after.headers["etag"] != before.headers["etag"]
+
+
 def test_validation_rules(monkeypatch: pytest.MonkeyPatch) -> None:
     good = _ingest(monkeypatch)
     trips = good["trips"]
@@ -197,24 +238,25 @@ def test_etag_and_304(monkeypatch: pytest.MonkeyPatch) -> None:
     _ingest(monkeypatch)
     res = api.get("/bus/timetable", params={"date": "2026-10-22"})
     version = res.json()["version"]
-    assert res.headers["etag"] == f'"{version}"'
+    tag = f"{version}-20261022"  # 태그에는 조회일이 항상 섞인다
+    assert res.headers["etag"] == f'"{tag}"'
     assert res.headers["cache-control"] == "public, max-age=300"
 
-    for tag in (f'"{version}"', f'W/"{version}"', f'"other", "{version}"', "*"):
+    for sent in (f'"{tag}"', f'W/"{tag}"', f'"other", "{tag}"', "*"):
         hit = api.get(
             "/bus/timetable",
             params={"date": "2026-10-22"},
-            headers={"If-None-Match": tag},
+            headers={"If-None-Match": sent},
         )
         assert hit.status_code == 304 and hit.content == b""
-        assert hit.headers["etag"] == f'"{version}"'
+        assert hit.headers["etag"] == f'"{tag}"'
         assert hit.headers["cache-control"] == "public, max-age=300"
 
-    for tag in ('"stale"', version):  # 따옴표 없는 값은 ETag 형식이 아님
+    for sent in ('"stale"', tag):  # 따옴표 없는 값은 ETag 형식이 아님
         miss = api.get(
             "/bus/timetable",
             params={"date": "2026-10-22"},
-            headers={"If-None-Match": tag},
+            headers={"If-None-Match": sent},
         )
         assert miss.status_code == 200 and miss.json()["version"] == version
     # 503에는 캐시 헤더를 붙이지 않음
