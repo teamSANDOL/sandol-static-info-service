@@ -17,6 +17,7 @@ from app.config.shuttle_routes import (
     STOP_IDS,
 )
 from app.schemas.shuttle import ShuttleTrip
+from app.services.holidays import api_holidays
 
 
 KST = ZoneInfo("Asia/Seoul")
@@ -297,6 +298,15 @@ def _load_json(path: str) -> dict:
         return json.load(f)
 
 
+def holiday_table() -> dict[str, str]:
+    """정적 파일과 API 캐시의 합집합(날짜 ISO → 이름). 같은 날짜는 정적 파일 이름을 씁니다.
+
+    Returns:
+        공휴일 표.
+    """
+    return {**api_holidays(), **_load_json(Config.HOLIDAYS_PATH)["dates"]}
+
+
 def day_type_of(on_date: date) -> tuple[str, str | None]:
     """조회일 → (day_type, 공휴일 이름). 공휴일 파일에 없는 해는 요일로만 판정합니다.
 
@@ -306,10 +316,12 @@ def day_type_of(on_date: date) -> tuple[str, str | None]:
     Returns:
         (weekday·saturday·sunday·holiday 중 하나, 공휴일 이름 또는 None).
     """
-    holidays = _load_json(Config.HOLIDAYS_PATH)
-    if on_date.year not in holidays["years"]:
-        logger.warning("공휴일 파일에 %d년이 없어 요일로만 판정합니다", on_date.year)
-    name = holidays["dates"].get(on_date.isoformat())
+    table = holiday_table()
+    if on_date.year not in _load_json(Config.HOLIDAYS_PATH)["years"] and not any(
+        d.startswith(f"{on_date.year}-") for d in table
+    ):
+        logger.warning("공휴일 자료에 %d년이 없어 요일로만 판정합니다", on_date.year)
+    name = table.get(on_date.isoformat())
     if name:
         return "holiday", name
     return {5: "saturday", 6: "sunday"}.get(on_date.weekday(), "weekday"), None
@@ -355,7 +367,7 @@ def timetable_version(doc: dict, stops: list[dict], needs_review: bool) -> str:
         "doc": {k: v for k, v in doc.items() if k != "pending"},
         "stops": stops,
         "needs_review": needs_review,
-        "holidays": _load_json(Config.HOLIDAYS_PATH),
+        "holidays": holiday_table(),
     }
     raw = json.dumps(body, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(raw.encode()).hexdigest()[:16]

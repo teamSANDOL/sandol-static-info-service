@@ -3,6 +3,7 @@
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from app.config.config import logger
+from app.services.holidays import refresh_holidays
 from app.services.shuttle_sync import sync_shuttle_timetables
 
 scheduler = AsyncIOScheduler(timezone="Asia/Seoul")
@@ -14,6 +15,11 @@ async def poll_shuttle_timetable() -> None:
     await sync_shuttle_timetables()
 
 
+async def poll_holidays() -> None:
+    """공휴일 API 캐시를 하루 한 번 갱신합니다(임시·대체공휴일이 연중에 추가됨)."""
+    await refresh_holidays()
+
+
 def start_scheduler() -> None:
     """6시간마다 도는 셔틀 시간표 동기화 잡을 시작합니다."""
     scheduler.add_job(
@@ -23,6 +29,17 @@ def start_scheduler() -> None:
         minute=0,
         timezone="Asia/Seoul",
         id="shuttle_timetable_sync",
+        max_instances=1,
+        coalesce=True,
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        poll_holidays,
+        trigger="cron",
+        hour=4,
+        minute=30,
+        timezone="Asia/Seoul",
+        id="holiday_refresh",
         max_instances=1,
         coalesce=True,
         replace_existing=True,

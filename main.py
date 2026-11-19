@@ -17,6 +17,7 @@ from app.routers import (
 )
 from app.config import Config, logger
 from app.jobs.scheduler import start_scheduler, stop_scheduler
+from app.services.holidays import refresh_holidays
 from app.services.shuttle_sync import sync_shuttle_timetables
 
 
@@ -35,10 +36,12 @@ async def lifespan(app: FastAPI):
     start_scheduler()
     # 배포 직후 수동 refresh 없이도 채워지도록 기동 시 1회 동기화 (참조를 잡아둬야 GC되지 않음)
     startup_sync = asyncio.create_task(sync_shuttle_timetables())
+    startup_holidays = asyncio.create_task(refresh_holidays())
 
     yield  # FastAPI가 실행 중인 동안 유지됨
 
     startup_sync.cancel()
+    startup_holidays.cancel()
     stop_scheduler()
 
     # 애플리케이션 종료 시 로그 출력

@@ -32,6 +32,7 @@ cp .env.example .env
 
 - `DEBUG`: 로깅 레벨 제어 (`true`/`false`)
 - `DATA_DIR`: 파싱 결과(`shuttle_timetable.json`)와 원본 PDF 보관 위치 (기본 `./data`, gitignore)
+- `HOLIDAY_API_KEY`: 공공데이터포털 한국천문연구원 특일 정보(`getRestDeInfo`) 서비스키(인코딩된 키도 가능). 비어 있으면 `app/config/holidays.json`만 씁니다. 있으면 기동 시와 매일 04:30(KST) 백그라운드에서 올해·내년을 받아 `DATA_DIR/holidays/<연도>.json`에 캐시하고(과거 연도는 재요청 안 함, 0건은 캐시 안 함), 요청은 캐시만 읽습니다. 정적 파일과 합집합으로 판정하며 API 실패 시 캐시 → 정적 파일 → 요일 순으로 물러납니다
 - 그 밖의 값(Keycloak, 관리자 화면, TUK World, `SCHOOL_INFO_PATH`)은 `.env.example`의 주석을 참고하세요.
 
 ## Docker 실행(추천)
@@ -117,7 +118,7 @@ trip 1건의 필드: `route`, `direction`, `origin`, `destination`, `via[]`, `da
 - `GET /static-info/bus/image/{index}`
 - `GET /static-info/meal/images` (주간 식단표 iBook 페이지 이미지)
 - `GET /static-info/meal/image/{index}`
-- `GET /static-info/bus/timetable?date=YYYY-MM-DD` — 조회일(생략 시 오늘, KST) 하루치 셔틀 시간표. 응답 `date`, `day_type`, `holiday_name`, `version`, `valid_from`/`valid_to`(연도 포함), `source{title,pdf_url,parsed_at,origin,needs_review}`, `stops[]`, `routes[].directions[]`(고정 6개: `main_out`·`main_in`·`campus2_out`·`campus2_in`·`campus2_from_station`·`campus2_to_station`, 운행 없으면 `segments: []`), `notes[]`. segment는 `{"type":"fixed","time","note"}` 또는 `{"type":"frequent"|"arrival_board","start","end","note"}`이며 시작 시각 오름차순입니다. 날짜 형식 오류 422, 저장된 시간표가 없으면 503 `{"detail":"timetable_unavailable"}`. 응답 헤더 `ETag: "<version>"`, `Cache-Control: public, max-age=300`이며 `If-None-Match`가 현재 태그와 같으면 본문 없이 304. `date`를 생략하면 태그는 `"<version>-<YYYYMMDD(KST)>"`라 다음 날 304로 어제 본문이 남지 않습니다. `version`은 날짜와 무관한 응답 재료(검토 대기본을 뺀 저장 문서 전체·정류장·needs_review·공휴일 파일)의 해시입니다
+- `GET /static-info/bus/timetable?date=YYYY-MM-DD` — 조회일(생략 시 오늘, KST) 하루치 셔틀 시간표. 응답 `date`, `day_type`, `holiday_name`, `version`, `valid_from`/`valid_to`(연도 포함), `source{title,pdf_url,parsed_at,origin,needs_review}`, `stops[]`, `routes[].directions[]`(고정 6개: `main_out`·`main_in`·`campus2_out`·`campus2_in`·`campus2_from_station`·`campus2_to_station`, 운행 없으면 `segments: []`), `notes[]`. segment는 `{"type":"fixed","time","note"}` 또는 `{"type":"frequent"|"arrival_board","start","end","note"}`이며 시작 시각 오름차순입니다. 날짜 형식 오류 422, 저장된 시간표가 없으면 503 `{"detail":"timetable_unavailable"}`. 응답 헤더 `ETag: "<version>-<조회일 YYYYMMDD>"`, `Cache-Control: public, max-age=300`이며 `If-None-Match`가 현재 태그와 같으면 본문 없이 304(다른 날짜의 태그로는 304가 나지 않습니다). `version`은 날짜와 무관한 응답 재료(검토 대기본을 뺀 저장 문서 전체·정류장·needs_review·정적 공휴일 파일과 API 캐시의 합집합)의 해시입니다
 - `POST /static-info/bus/timetable/refresh` (관리자 Bearer) — iBook 원본 PDF를 백그라운드에서 동기화(변경 시에만 재파싱), 즉시 202 반환. 쿼리 `force=true`면 사용자 수정본과 해시 가드를 모두 무시하고 강제 재파싱(`KC_ADMIN_ROLE` 전체 관리자만, 셔틀 관리자는 403). 기동 시 자동 동기화되므로 최초 적재용 수동 호출은 불필요, 결과는 잠시 후 `GET /bus/timetable`로 확인
 - `PUT /static-info/bus/timetable/{place}` (관리자 Bearer) — place의 시간표를 사용자가 직접 입력해 저장 (body `{"title": "...", "trips": [...], "notes": [...]}`, `title`은 보낸 값으로 저장되며 생략하면 null, `notes`는 생략하면 기존 안내문 유지, trip의 `kind`는 생략 가능). 이후 cron/refresh가 덮어쓰지 않음
 - `DELETE /static-info/bus/timetable/{place}` (관리자 Bearer) — 사용자 수정본을 삭제해 다시 PDF 파싱 대상으로 되돌림
