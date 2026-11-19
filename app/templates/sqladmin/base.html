@@ -1,0 +1,22 @@
+{% extends "sqladmin_pkg/sqladmin/base.html" %}
+{# sqladmin 기본 화면의 쓰기(POST 폼, jQuery DELETE)에 CSRF 토큰을 붙인다. 검증은 AdminCSRFMiddleware. #}
+{% block head %}
+<meta name="csrf-token" content="{{ admin_csrf_token(request) }}">
+<script>
+  document.addEventListener("DOMContentLoaded", function () {
+    var token = document.querySelector('meta[name="csrf-token"]').content;
+    document.querySelectorAll('form[method="post" i]').forEach(function (form) {
+      if (form.querySelector('input[name="csrf_token"]')) return;
+      var input = document.createElement("input");
+      input.type = "hidden";
+      input.name = "csrf_token";
+      input.value = token;
+      form.appendChild(input);
+    });
+    if (window.jQuery) {
+      window.jQuery.ajaxSetup({ headers: { "X-CSRF-Token": token } });
+    }
+  });
+</script>
+{{ super() }}
+{% endblock %}
