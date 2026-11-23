@@ -175,13 +175,7 @@ def check_sync():
 
 
 def check_fetch_pdf():
-    """RawFileList → 파일 URL → 다운로드. place는 파일명에서 확장자를 뗀 값."""
-
-    class _Resp:
-        content = PDF_BYTES
-
-        def raise_for_status(self):
-            pass
+    """rawFileList → 파일 URL → 다운로드. place는 파일명에서 확장자를 뗀 값."""
 
     async def fake_file_list(self):
         self.file_name = "26년 셔틀버스 시간표 (2학기).pdf"
@@ -195,7 +189,10 @@ def check_fetch_pdf():
             "app.services.shuttle_sync.BookDownloader.get_file_url",
             lambda self, _: "https://x/a.pdf",
         ),
-        patch("httpx.AsyncClient.get", AsyncMock(return_value=_Resp())),
+        patch(
+            "app.services.shuttle_sync.BookDownloader.download_bytes",
+            AsyncMock(return_value=PDF_BYTES),
+        ),
     ):
         place, url, content = asyncio.run(syn.fetch_shuttle_pdf())
     assert place == "26년 셔틀버스 시간표 (2학기)"

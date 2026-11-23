@@ -37,7 +37,7 @@ class Config:
     SHUTTLE_URL: str = "https://ibook.tukorea.ac.kr/Viewer/bus01"
     WEEKLY_MENU_URL: str = "https://ibook.tukorea.ac.kr/Viewer/menu02"
 
-    # 셔틀 시간표는 iBook 원본 PDF(/web/RawFileList)를 좌표 기반으로 파싱합니다.
+    # 셔틀 시간표는 iBook 원본 PDF(/Viewer/rawFileList)를 좌표 기반으로 파싱합니다.
     # 외부 AI 호출은 쓰지 않습니다.
 
     # 파싱 결과 저장 위치 (compose에서 bind mount)

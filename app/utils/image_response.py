@@ -11,9 +11,36 @@ import base64
 import io
 import zipfile
 
-import httpx
-
 from app.config import Config
+from app.utils.ibookdownloader import (
+    BookDownloader,
+    FetchError,
+    RemoteAccessBlockedError,
+)
+
+
+async def _download_image(url: str) -> bytes:
+    """학교 이미지를 내려받습니다(download 래치·User-Agent는 BookDownloader가 처리).
+
+    Args:
+        url: 이미지 주소.
+
+    Returns:
+        이미지 바이트.
+
+    Raises:
+        HTTPException: 다운로드가 실패하면 502.
+        RemoteAccessBlockedError: 학교가 접근을 막았을 때(호출부가 처리).
+    """
+    try:
+        return await BookDownloader().download_bytes(url, timeout=10)
+    except RemoteAccessBlockedError:
+        raise
+    except FetchError as e:
+        raise HTTPException(
+            status_code=Config.HttpStatus.BAD_GATEWAY,
+            detail=f"이미지 다운로드 실패: {url}",
+        ) from e
 
 
 async def build_response_json(image_urls: list[str]):
@@ -41,16 +68,9 @@ async def build_response_base64(image_urls: list[str]):
         HTTPException: 이미지 다운로드가 실패하면 502.
     """
     base64_list = []
-    async with httpx.AsyncClient() as client:
-        for url in image_urls:
-            resp = await client.get(url, timeout=10)
-            if resp.status_code != Config.HttpStatus.OK:
-                raise HTTPException(
-                    status_code=Config.HttpStatus.BAD_GATEWAY,
-                    detail=f"이미지 다운로드 실패: {url}",
-                )
-            encoded = base64.b64encode(resp.content).decode("utf-8")
-            base64_list.append(encoded)
+    for url in image_urls:
+        encoded = base64.b64encode(await _download_image(url)).decode("utf-8")
+        base64_list.append(encoded)
     return JSONResponse(
         content={"image_base64_list": base64_list}
         if len(base64_list) > 1
@@ -72,16 +92,9 @@ async def build_response_zip(image_urls: list[str], file_stem: str = "shuttle"):
         HTTPException: 이미지 다운로드가 실패하면 502.
     """
     zip_buffer = io.BytesIO()
-    async with httpx.AsyncClient() as client:
-        with zipfile.ZipFile(zip_buffer, "w") as zip_file:
-            for idx, url in enumerate(image_urls, 1):
-                resp = await client.get(url, timeout=10)
-                if resp.status_code != Config.HttpStatus.OK:
-                    raise HTTPException(
-                        status_code=Config.HttpStatus.BAD_GATEWAY,
-                        detail=f"이미지 다운로드 실패: {url}",
-                    )
-                zip_file.writestr(f"{file_stem}_{idx}.jpg", resp.content)
+    with zipfile.ZipFile(zip_buffer, "w") as zip_file:
+        for idx, url in enumerate(image_urls, 1):
+            zip_file.writestr(f"{file_stem}_{idx}.jpg", await _download_image(url))
     zip_buffer.seek(0)
     return StreamingResponse(
         zip_buffer,
@@ -106,20 +119,12 @@ async def build_response_octet_stream(
         HTTPException: 이미지 다운로드가 실패하면 502.
     """
     if len(image_urls) == 1:
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(image_urls[0], timeout=10)
-            if resp.status_code != Config.HttpStatus.OK:
-                raise HTTPException(
-                    status_code=Config.HttpStatus.BAD_GATEWAY,
-                    detail="이미지 다운로드 실패",
-                )
-            return StreamingResponse(
-                iter([resp.content]),
-                media_type="image/jpeg",
-                headers={"Content-Disposition": f"inline; filename={file_stem}.jpg"},
-            )
-    else:
-        return await build_response_zip(image_urls, file_stem)
+        return StreamingResponse(
+            iter([await _download_image(image_urls[0])]),
+            media_type="image/jpeg",
+            headers={"Content-Disposition": f"inline; filename={file_stem}.jpg"},
+        )
+    return await build_response_zip(image_urls, file_stem)
 
 
 async def build_response_text(image_urls: list[str]):
@@ -147,17 +152,11 @@ async def build_response_jpeg(image_urls: list[str], file_stem: str = "shuttle")
     Raises:
         HTTPException: 이미지 다운로드가 실패하면 502.
     """
-    async with httpx.AsyncClient() as client:
-        resp = await client.get(image_urls[0], timeout=10)
-        if resp.status_code != Config.HttpStatus.OK:
-            raise HTTPException(
-                status_code=Config.HttpStatus.BAD_GATEWAY, detail="이미지 다운로드 실패"
-            )
-        return StreamingResponse(
-            iter([resp.content]),
-            media_type="image/jpeg",
-            headers={"Content-Disposition": f"inline; filename={file_stem}.jpg"},
-        )
+    return StreamingResponse(
+        iter([await _download_image(image_urls[0])]),
+        media_type="image/jpeg",
+        headers={"Content-Disposition": f"inline; filename={file_stem}.jpg"},
+    )
 
 
 async def build_image_response(

@@ -33,6 +33,7 @@ cp .env.example .env
 - `DEBUG`: 로깅 레벨 제어 (`true`/`false`)
 - `DATA_DIR`: 파싱 결과(`shuttle_timetable.json`)와 원본 PDF 보관 위치 (기본 `./data`, gitignore)
 - `HOLIDAY_API_KEY`: 공공데이터포털 한국천문연구원 특일 정보(`getRestDeInfo`) 서비스키(인코딩된 키도 가능). 비어 있으면 `app/config/holidays.json`만 씁니다. 있으면 기동 시와 매일 04:30(KST) 백그라운드에서 올해·내년을 받아 `DATA_DIR/holidays/<연도>.json`에 캐시하고(과거 연도는 재요청 안 함, 0건은 캐시 안 함), 요청은 캐시만 읽습니다. 정적 파일과 합집합으로 판정하며 API 실패 시 캐시 → 정적 파일 → 요일 순으로 물러납니다
+- 학교 서버가 401·403·429를 주면 그 요청은 재시작 전까지 다시 보내지 않는다.
 - 그 밖의 값(Keycloak, 관리자 화면, TUK World, `SCHOOL_INFO_PATH`)은 `.env.example`의 주석을 참고하세요.
 
 ## Docker 실행(추천)

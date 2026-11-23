@@ -9,6 +9,7 @@ from fastapi.responses import Response
 
 from app.config import Config, logger
 from app.utils import BookDownloader
+from app.utils.ibookdownloader import RemoteAccessBlockedError
 from app.schemas.responses import all_images_responses, single_image_responses
 from app.utils.image_response import (
     ALL_IMAGES_TYPES,
@@ -16,6 +17,19 @@ from app.utils.image_response import (
     build_image_response,
     resolve_response_type,
 )
+
+
+BLOCKED_DETAIL = "학교 서버가 요청을 거부해 재시작 전까지 이미지를 가져오지 않습니다."
+BLOCKED_RESPONSES: dict[int | str, dict[str, str]] = {
+    Config.HttpStatus.SERVICE_UNAVAILABLE: {"description": BLOCKED_DETAIL}
+}
+
+
+def _blocked_503() -> HTTPException:
+    """차단 래치가 걸렸을 때 돌려줄 503 예외를 만듭니다."""
+    return HTTPException(
+        status_code=Config.HttpStatus.SERVICE_UNAVAILABLE, detail=BLOCKED_DETAIL
+    )
 
 
 def create_ibook_image_router(prefix: str, book_url: str, label: str) -> APIRouter:
@@ -33,24 +47,29 @@ def create_ibook_image_router(prefix: str, book_url: str, label: str) -> APIRout
     file_stem = prefix.strip("/")
 
     @router.get(
-        "/images", responses=all_images_responses(label), response_class=Response
+        "/images",
+        responses={**all_images_responses(label), **BLOCKED_RESPONSES},
+        response_class=Response,
     )
     async def get_all_images(request: Request):
         """모든 이미지를 Accept 헤더에 따라 다양한 형식으로 반환합니다."""
         response_type = resolve_response_type(request, ALL_IMAGES_TYPES)
         logger.info("모든 %s 이미지 요청 수신", label)
 
-        image_urls = await BookDownloader(book_url).fetch_image_list()
-        if not image_urls:
-            raise HTTPException(
-                status_code=Config.HttpStatus.NOT_FOUND,
-                detail=f"{label} 이미지가 없습니다.",
-            )
-        return await build_image_response(image_urls, response_type, file_stem)
+        try:
+            image_urls = await BookDownloader(book_url).fetch_image_list()
+            if not image_urls:
+                raise HTTPException(
+                    status_code=Config.HttpStatus.NOT_FOUND,
+                    detail=f"{label} 이미지가 없습니다.",
+                )
+            return await build_image_response(image_urls, response_type, file_stem)
+        except RemoteAccessBlockedError as e:
+            raise _blocked_503() from e
 
     @router.get(
         "/image/{index}",
-        responses=single_image_responses(label),
+        responses={**single_image_responses(label), **BLOCKED_RESPONSES},
         response_class=Response,
     )
     async def get_image_by_index(index: int, request: Request):
@@ -58,14 +77,17 @@ def create_ibook_image_router(prefix: str, book_url: str, label: str) -> APIRout
         response_type = resolve_response_type(request, SINGLE_IMAGE_TYPES)
         logger.info("%s 이미지 요청 (index=%d)", label, index)
 
-        image_urls = await BookDownloader(book_url).fetch_image_list()
-        if index < 1 or index > len(image_urls):
-            raise HTTPException(
-                status_code=Config.HttpStatus.NOT_FOUND,
-                detail="해당 index의 이미지가 없습니다.",
+        try:
+            image_urls = await BookDownloader(book_url).fetch_image_list()
+            if index < 1 or index > len(image_urls):
+                raise HTTPException(
+                    status_code=Config.HttpStatus.NOT_FOUND,
+                    detail="해당 index의 이미지가 없습니다.",
+                )
+            return await build_image_response(
+                image_urls[index - 1], response_type, file_stem
             )
-        return await build_image_response(
-            image_urls[index - 1], response_type, file_stem
-        )
+        except RemoteAccessBlockedError as e:
+            raise _blocked_503() from e
 
     return router
