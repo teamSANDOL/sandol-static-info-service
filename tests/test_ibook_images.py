@@ -46,3 +46,31 @@ def test_out_of_range_index_and_bad_accept(fake_fetch: list[str]) -> None:
     assert (
         client.get("/meal/images", headers={"Accept": "image/png"}).status_code == 406
     )
+
+
+def test_image_download_403_latches_then_503(monkeypatch: pytest.MonkeyPatch) -> None:
+    """이미지 GET이 403이면 download 래치가 걸리고 다음 호출은 요청 없이 503."""
+    import httpx
+
+    from app.utils.ibookdownloader import _blocked_kinds
+
+    _blocked_kinds.clear()
+    calls: list[str] = []
+
+    async def _list(self: ibookdownloader.BookDownloader) -> list[str]:
+        return ["https://contents.tukorea.ac.kr/a.jpg"]
+
+    async def _get(self: httpx.AsyncClient, url: str, **kw: object) -> httpx.Response:
+        calls.append(url)
+        return httpx.Response(403, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(ibookdownloader.BookDownloader, "fetch_image_list", _list)
+    monkeypatch.setattr(httpx.AsyncClient, "get", _get)
+    try:
+        headers = {"Accept": "image/jpeg"}
+        assert client.get("/bus/image/1", headers=headers).status_code == 503
+        assert len(calls) == 1
+        assert client.get("/bus/image/1", headers=headers).status_code == 503
+        assert len(calls) == 1  # 두 번째는 네트워크 요청 0회
+    finally:
+        _blocked_kinds.clear()
