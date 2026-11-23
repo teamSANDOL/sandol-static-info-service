@@ -1,6 +1,6 @@
 """셔틀버스 시간표 PDF 파서 (결정론적, 외부 API 호출 없음).
 
-iBook이 제공하는 원본 PDF(`/web/RawFileList`)를 좌표 기반으로 읽습니다.
+iBook이 제공하는 원본 PDF(`/Viewer/rawFileList`)를 좌표 기반으로 읽습니다.
 전부 한글(HWP)에서 export된 텍스트 PDF라 OCR이 필요 없습니다.
 
 레이아웃:

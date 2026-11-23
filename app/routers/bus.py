@@ -17,6 +17,7 @@ from app.routers.ibook_images import create_ibook_image_router
 from app.schemas.shuttle import ParsedTimetable
 from app.schemas.shuttle_responses import (
     DELETE_RESPONSES,
+    REFRESH_BLOCKED_DETAIL,
     PUT_RESPONSES,
     REFRESH_RESPONSES,
     TIMETABLE_RESPONSES,
@@ -25,6 +26,7 @@ from app.services import shuttle as service
 from app.services.shuttle_admin import ensure_force_allowed
 from app.services.shuttle_store import delete_timetable, save_user_timetable
 from app.utils.audit import arecord_audit
+from app.utils.ibookdownloader import is_blocked
 from app.utils.keycloak_auth import require_shuttle_admin, shuttle_admin_identity
 
 Admin = Annotated[str, Depends(require_shuttle_admin)]
@@ -85,6 +87,12 @@ async def refresh_shuttle_timetable(
     ensure_force_allowed(
         roles, force, "force 동기화(수정본 덮어쓰기)는 전체 관리자만 할 수 있습니다."
     )
+    # 학교 서버가 거부해 래치가 걸렸으면 큐에 넣지 않고 503(재시작 전까지 재요청 없음)
+    if is_blocked("viewer", "raw_file_list", "download"):
+        raise HTTPException(
+            status_code=Config.HttpStatus.SERVICE_UNAVAILABLE,
+            detail=REFRESH_BLOCKED_DETAIL,
+        )
     await arecord_audit(sub, "shuttle.timetable.refresh", f"force={force}")
     service.queue_sync(force)
     return {"queued": True}

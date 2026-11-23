@@ -6,8 +6,6 @@ import re
 from datetime import datetime, timezone
 from typing import Any
 
-import httpx
-
 from app.config import Config, logger
 from app.config.shuttle_routes import SHUTTLE_DIRECTIONS
 from app.schemas.shuttle import ShuttleTrip
@@ -18,7 +16,7 @@ from app.services.shuttle_store import (
     store_lock,
     with_trip_ids,
 )
-from app.utils.ibookdownloader import BookDownloader
+from app.utils.ibookdownloader import BookDownloader, RemoteAccessBlockedError
 from app.utils.shuttle_pdf import parse_shuttle_pdf
 
 
@@ -31,11 +29,9 @@ async def fetch_shuttle_pdf() -> tuple[str, str, bytes]:
     downloader = BookDownloader(Config.SHUTTLE_URL)
     file_list = await downloader.fetch_file_list()
     pdf_url = downloader.get_file_url(file_list)
-    async with httpx.AsyncClient(follow_redirects=True) as client:
-        resp = await client.get(pdf_url, timeout=60)
-        resp.raise_for_status()
+    content = await downloader.download_bytes(pdf_url)
     place = os.path.splitext(downloader.file_name or "셔틀버스 시간표")[0].strip()
-    return place, pdf_url, resp.content
+    return place, pdf_url, content
 
 
 async def ingest_shuttle_pdf(force: bool = False) -> dict | None:
@@ -197,6 +193,9 @@ async def sync_shuttle_timetables(force: bool = False) -> list[str]:
     """
     try:
         doc = await ingest_shuttle_pdf(force=force)
+    except RemoteAccessBlockedError as e:
+        logger.warning("셔틀 시간표 동기화 건너뜀(학교 접근 차단): %s", e)
+        return []
     except Exception:
         logger.exception("셔틀 시간표 동기화 실패")
         return []

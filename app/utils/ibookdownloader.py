@@ -7,6 +7,13 @@ from xml.etree import ElementTree
 import httpx
 from app.config import Config, logger
 
+# 학교 서버가 접근을 막은 엔드포인트 종류. 프로세스가 재시작될 때까지 다시 요청하지 않는다.
+BLOCKED_STATUS_CODES = frozenset({401, 403, 429})
+_blocked_kinds: set[str] = set()
+
+# 정직한 User-Agent(브라우저 위장 금지)
+USER_AGENT = "Mozilla/5.0 (compatible; sandol-static-info-service)"
+
 
 class FetchError(Exception):
     """iBook 요청이 실패했을 때 올리는 예외."""
@@ -25,13 +32,76 @@ class FetchError(Exception):
         super().__init__(self.message)
 
 
+class RemoteAccessBlockedError(FetchError):
+    """학교 서버가 접근을 막았거나 설정으로 호출을 끈 경우 올리는 예외(네트워크 요청 없음)."""
+
+    def __init__(self, kind: str, status_code: Optional[int] = None):
+        """차단된 엔드포인트 종류를 담아 예외를 만듭니다.
+
+        Args:
+            kind: 엔드포인트 종류("viewer", "raw_file_list", "book_xml", "download").
+            status_code: 차단을 알린 HTTP 상태 코드. 요청 전에 막았으면 None.
+        """
+        self.kind = kind
+        super().__init__(
+            status_code, f"학교 iBook 접근이 차단되어 요청하지 않습니다: {kind}."
+        )
+
+
+def is_blocked(*kinds: str) -> bool:
+    """주어진 종류 중 하나라도 학교 서버가 거부해 래치가 걸렸는지 돌려줍니다.
+
+    Args:
+        *kinds: 엔드포인트 종류들.
+
+    Returns:
+        하나라도 차단 기록이 있으면 True.
+    """
+    return any(kind in _blocked_kinds for kind in kinds)
+
+
+def _guard(kind: str) -> None:
+    """차단 래치에 기록된 종류면 네트워크 요청 전에 예외를 올립니다.
+
+    Args:
+        kind: 엔드포인트 종류.
+
+    Raises:
+        RemoteAccessBlockedError: 이미 차단으로 기록된 종류일 때.
+    """
+    if kind in _blocked_kinds:
+        raise RemoteAccessBlockedError(kind)
+
+
+def _check_blocked(kind: str, response: httpx.Response) -> None:
+    """응답이 401·403·429면 래치에 기록하고(error 로그 한 번) 예외를 올립니다.
+
+    Args:
+        kind: 엔드포인트 종류.
+        response: 학교 서버 응답.
+
+    Raises:
+        RemoteAccessBlockedError: 상태 코드가 401·403·429일 때.
+    """
+    if response.status_code not in BLOCKED_STATUS_CODES:
+        return
+    if kind not in _blocked_kinds:
+        _blocked_kinds.add(kind)
+        logger.error(
+            "[BookDownloader] 학교 서버가 접근을 거부해 %s 요청을 중단합니다 (status=%s, 재시작 전까지 재요청 없음)",
+            kind,
+            response.status_code,
+        )
+    raise RemoteAccessBlockedError(kind, response.status_code)
+
+
 class BookDownloader:
     """한국공학대학교 iBook에서 파일을 비동기로 다운로드하는 클래스입니다."""
 
     def __init__(
         self,
         url: str = "https://ibook.tukorea.ac.kr/Viewer/menu02",
-        file_list_url: str = "https://ibook.tukorea.ac.kr/web/RawFileList",
+        file_list_url: str = "https://ibook.tukorea.ac.kr/Viewer/rawFileList",
         image_save_path: str = "images",
     ):
         """다운로더를 설정합니다.
@@ -44,13 +114,14 @@ class BookDownloader:
         self.url = url
         self.file_list_url = file_list_url
         self.image_save_path = image_save_path
-        self.bookcode = None
-        self.file_name = None
+        self.bookcode: Optional[str] = None
+        self.file_name: Optional[str] = None
         self.headers = {
             "Accept": "*/*",
             "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
             "Origin": "https://ibook.tukorea.ac.kr",
             "Referer": url,
+            "User-Agent": USER_AGENT,
             "X-Requested-With": "XMLHttpRequest",
         }
 
@@ -63,16 +134,32 @@ class BookDownloader:
         Raises:
             FetchError: 페이지 요청이 실패하거나 bookcode가 없을 때.
         """
-        async with httpx.AsyncClient() as client:
-            response = await client.get(self.url, timeout=10)
-            if response.status_code != Config.HttpStatus.OK:
-                raise FetchError(response.status_code, "bookcode 요청 실패")
+        async with httpx.AsyncClient(headers=self.headers) as client:
+            return await self._read_bookcode(client)
 
-            for line in response.text.splitlines():
-                if "var bookcode =" in line:
-                    self.bookcode = line.split("=")[1].strip().strip(";").strip("'")
-                    logger.info(f"[BookDownloader] bookcode: {self.bookcode}")
-                    return self.bookcode
+    async def _read_bookcode(self, client: httpx.AsyncClient) -> str:
+        """주어진 클라이언트(쿠키 유지)로 뷰어 페이지를 읽어 bookcode를 저장합니다.
+
+        Args:
+            client: 뷰어 GET과 이후 요청이 함께 쓰는 클라이언트.
+
+        Returns:
+            bookcode 문자열.
+
+        Raises:
+            FetchError: 페이지 요청이 실패하거나 bookcode가 없을 때.
+        """
+        _guard("viewer")
+        response = await client.get(self.url, timeout=10)
+        _check_blocked("viewer", response)
+        if response.status_code != Config.HttpStatus.OK:
+            raise FetchError(response.status_code, "bookcode 요청 실패")
+
+        for line in response.text.splitlines():
+            if "var bookcode =" in line:
+                self.bookcode = line.split("=")[1].strip().strip(";").strip("'")
+                logger.info(f"[BookDownloader] bookcode: {self.bookcode}")
+                return self.bookcode
 
         raise FetchError(None, "bookcode를 찾을 수 없습니다.")
 
@@ -84,18 +171,16 @@ class BookDownloader:
 
         Raises:
             FetchError: 목록 요청이 실패했을 때.
+            RemoteAccessBlockedError: 학교가 접근을 막았을 때.
         """
-        if self.bookcode is None:
-            await self.fetch_bookcode()
-
-        data = {"key": "kpu", "bookcode": self.bookcode, "base64": "N"}
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                self.file_list_url,
-                headers=self.headers,
-                data=data,
-                timeout=10,
-            )
+        _guard("raw_file_list")
+        # 뷰어 GET과 POST는 같은 클라이언트(세션 쿠키 유지)로 보낸다.
+        async with httpx.AsyncClient(headers=self.headers) as client:
+            if self.bookcode is None:
+                await self._read_bookcode(client)
+            data = {"bookcode": self.bookcode, "base64": "N"}
+            response = await client.post(self.file_list_url, data=data, timeout=10)
+            _check_blocked("raw_file_list", response)
             if response.status_code != Config.HttpStatus.OK:
                 raise FetchError(response.status_code, "파일 목록 요청 실패")
             return response.text
@@ -127,6 +212,30 @@ class BookDownloader:
             return f"https://{host}/contents/{bookcode[0]}/{bookcode[:3]}/{bookcode}/raw/{file_name}"
         raise FetchError(None, "파일 URL을 찾을 수 없습니다.")
 
+    async def download_bytes(self, file_url: str, timeout: float = 60) -> bytes:
+        """파일을 내려받아 바이트로 돌려줍니다(리다이렉트 따라감, download 래치 적용).
+
+        Args:
+            file_url: 내려받을 주소.
+            timeout: 요청 제한 시간(초).
+
+        Returns:
+            파일 내용.
+
+        Raises:
+            FetchError: 다운로드 응답이 성공이 아닐 때.
+            RemoteAccessBlockedError: 학교가 접근을 막았을 때.
+        """
+        _guard("download")
+        async with httpx.AsyncClient(
+            headers={"User-Agent": USER_AGENT}, follow_redirects=True
+        ) as client:
+            response = await client.get(file_url, timeout=timeout)
+            _check_blocked("download", response)
+            if response.status_code != Config.HttpStatus.OK:
+                raise FetchError(response.status_code, "파일 다운로드 실패")
+            return response.content
+
     async def download_file(self, file_url: str, save_as: str):
         """파일을 내려받아 저장합니다.
 
@@ -137,12 +246,9 @@ class BookDownloader:
         Raises:
             FetchError: 다운로드 응답이 성공이 아닐 때.
         """
-        async with httpx.AsyncClient() as client:
-            response = await client.get(file_url, timeout=10)
-            if response.status_code != Config.HttpStatus.OK:
-                raise FetchError(response.status_code, "파일 다운로드 실패")
-            with open(save_as, "wb") as f:
-                f.write(response.content)
+        content = await self.download_bytes(file_url, timeout=10)
+        with open(save_as, "wb") as f:
+            f.write(content)
         logger.info(f"[BookDownloader] 파일 저장 완료 → {save_as}")
 
     async def fetch_image_list(self) -> list[str]:
@@ -158,8 +264,10 @@ class BookDownloader:
             await self.fetch_bookcode()
 
         json_url = f"{self.url.rsplit('/', 1)[0]}/getBookXML/{self.bookcode}"
+        _guard("book_xml")
         async with httpx.AsyncClient() as client:
             response = await client.get(json_url, headers=self.headers, timeout=10)
+            _check_blocked("book_xml", response)
             if response.status_code != Config.HttpStatus.OK:
                 raise FetchError(
                     response.status_code, "이미지 목록을 가져오지 못했습니다."
@@ -192,7 +300,9 @@ class BookDownloader:
         async with httpx.AsyncClient() as client:
             for idx, url in enumerate(image_urls, start=1):
                 save_as = os.path.join(image_save_path, f"page_{idx}.jpg")
+                _guard("download")
                 response = await client.get(url, headers=self.headers, timeout=10)
+                _check_blocked("download", response)
 
                 if response.status_code == Config.HttpStatus.OK:
                     with open(save_as, "wb") as f:
@@ -210,7 +320,6 @@ class BookDownloader:
             file_name: 저장 경로. None이면 목록의 파일명 또는 기본 경로.
         """
         file_name = file_name or self.file_name or "/tmp/data.xlsx"  # noqa: S108 - 기존 기본 경로 유지
-        await self.fetch_bookcode()
         file_list = await self.fetch_file_list()
         file_url = self.get_file_url(file_list)
         await self.download_file(file_url, file_name)

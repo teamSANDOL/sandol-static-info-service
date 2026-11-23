@@ -78,10 +78,16 @@ TIMETABLE_RESPONSES: OpenApiResponses = {
     },
 }
 
+REFRESH_BLOCKED_DETAIL = (
+    "학교 서버가 요청을 거부해 재시작 전까지 다시 요청하지 않음. "
+    "관리자 화면에서 PDF 업로드 또는 직접 입력"
+)
+
 REFRESH_RESPONSES: OpenApiResponses = {
     Config.HttpStatus.ACCEPTED: {
         "description": "iBook 원본 PDF로 백그라운드 동기화 시작(변경 시에만 재파싱). 결과는 GET /bus/timetable 로 확인"
     },
+    Config.HttpStatus.SERVICE_UNAVAILABLE: {"description": REFRESH_BLOCKED_DETAIL},
     **SHUTTLE_AUTH_RESPONSES,
 }
 
